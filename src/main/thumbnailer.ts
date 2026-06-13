@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { getThumbsDir, insertThumbnails } from './db';
+import { codecFamily, type CodecFamily } from './probe';
 import type { Thumbnail } from '../shared/types';
 
 const FRAME_COUNT = 8;
@@ -21,21 +22,45 @@ export interface ExtractOptions {
   onFrameWritten?: (index: number, timeOffset: number) => void;
 }
 
-function codecFamily(codec: string | null | undefined): 'hevc' | 'h264' | 'other' {
-  if (!codec) return 'other';
-  const c = codec.toLowerCase();
-  if (c === 'hevc' || c === 'h265') return 'hevc';
-  if (c === 'h264' || c === 'avc' || c === 'avc1') return 'h264';
-  return 'other';
+interface Candidate {
+  label: string;
+  args: string[];
 }
 
-function buildArgs(videoPath: string, interval: number, codec: string | null): string[] {
+function buildCandidates(
+  videoPath: string,
+  family: CodecFamily,
+  interval: number
+): Candidate[] {
   const outPattern = join(thumbsDirFor(videoPath), 'thumb_%03d.jpg');
-  const family = codecFamily(codec);
-  const useVT = process.platform === 'darwin' && (family === 'hevc' || family === 'h264');
+  const isMac = process.platform === 'darwin';
+  const candidates: Candidate[] = [];
+  const seen = new Set<string>();
 
-  if (useVT) {
-    const decoder = family === 'hevc' ? 'hevc_videotoolbox' : 'h264_videotoolbox';
+  function add(label: string, args: string[]): void {
+    if (seen.has(label)) return;
+    seen.add(label);
+    candidates.push({ label, args });
+  }
+
+  const fps = `fps=1/${interval.toFixed(3)}`;
+  const swFilter = `${fps},scale=${TARGET_WIDTH}:-2`;
+  const vtFilter = `${fps},scale_vt=${TARGET_WIDTH}:-2`;
+
+  function swArgs(decoder: string | null): string[] {
+    const a = [
+      '-nostdin',
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-ss', '0'
+    ];
+    if (decoder) a.push('-c:v', decoder);
+    a.push('-i', videoPath, '-vf', swFilter, '-frames:v', String(FRAME_COUNT), '-vsync', 'vfr', '-q:v', '2', outPattern);
+    return a;
+  }
+
+  function vtArgs(decoder: 'hevc_videotoolbox' | 'h264_videotoolbox'): string[] {
     return [
       '-nostdin',
       '-hide_banner',
@@ -44,7 +69,7 @@ function buildArgs(videoPath: string, interval: number, codec: string | null): s
       '-ss', '0',
       '-c:v', decoder,
       '-i', videoPath,
-      '-vf', `fps=1/${interval.toFixed(3)},scale_vt=${TARGET_WIDTH}:-2`,
+      '-vf', vtFilter,
       '-frames:v', String(FRAME_COUNT),
       '-vsync', 'vfr',
       '-q:v', '2',
@@ -52,56 +77,55 @@ function buildArgs(videoPath: string, interval: number, codec: string | null): s
     ];
   }
 
-  return [
-    '-nostdin',
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-y',
-    '-ss', '0',
-    '-i', videoPath,
-    '-vf', `fps=1/${interval.toFixed(3)},scale=${TARGET_WIDTH}:-2`,
-    '-frames:v', String(FRAME_COUNT),
-    '-vsync', 'vfr',
-    '-q:v', '2',
-    outPattern
-  ];
-}
+  // Candidates are emitted unconditionally; ffmpeg will fail fast with
+  // "Decoder not found" (~100ms) if a specific decoder isn't compiled in,
+  // and the next candidate takes over. We do NOT gate on `available` because
+  // a misparsed decoder list would otherwise produce zero candidates and
+  // break thumbnail generation for files that ffmpeg can clearly handle.
 
-export async function generateThumbnails(
-  videoId: number,
-  videoPath: string,
-  durationSec: number,
-  codec: string | null,
-  onProgress?: (i: number) => void
-): Promise<void> {
-  const outDir = thumbsDirFor(videoPath);
-  await rm(outDir, { recursive: true, force: true });
-  await mkdir(outDir, { recursive: true });
-
-  const interval = Math.max(durationSec / FRAME_COUNT, 0.05);
-
-  let args: string[];
-  try {
-    args = buildArgs(videoPath, interval, codec);
-  } catch (e) {
-    throw new Error(`failed to build ffmpeg args: ${String(e)}`);
+  // 1) Primary path based on detected family.
+  if (family === 'hevc') {
+    if (isMac) add('hevc_videotoolbox+scale_vt', vtArgs('hevc_videotoolbox'));
+    add('hevc+scale', swArgs('hevc'));
+    if (isMac) add('h264_videotoolbox+scale_vt', vtArgs('h264_videotoolbox'));
+  } else if (family === 'h264') {
+    if (isMac) add('h264_videotoolbox+scale_vt', vtArgs('h264_videotoolbox'));
+    add('h264+scale', swArgs('h264'));
+  } else if (family === 'av1') {
+    add('av1+scale', swArgs('av1'));
+    if (isMac) add('hevc_videotoolbox+scale_vt', vtArgs('hevc_videotoolbox'));
+  } else {
+    // 2) Unknown codec: try defaults then last-resort VT guesses.
+    add('auto+scale', swArgs(null));
+    if (isMac) add('hevc_videotoolbox+scale_vt', vtArgs('hevc_videotoolbox'));
+    if (isMac) add('h264_videotoolbox+scale_vt', vtArgs('h264_videotoolbox'));
   }
 
+  return candidates;
+}
+
+interface RunResult {
+  files: string[];
+  error: string;
+  timedOut: boolean;
+}
+
+async function runFfmpeg(args: string[], outDir: string): Promise<RunResult> {
   let exitCode: number | null = null;
-  let stderrTail = '';
+  let stderr = '';
   let timedOut = false;
+  let spawnErr: string | null = null;
 
   await new Promise<void>((resolve) => {
     let child;
     try {
       child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (e) {
-      stderrTail = String(e);
+      spawnErr = String(e);
       resolve();
       return;
     }
 
-    let stderr = '';
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
@@ -110,27 +134,17 @@ export async function generateThumbnails(
     child.stderr?.on('data', (d) => { stderr += d.toString(); });
     child.on('error', (e) => {
       clearTimeout(timer);
-      exitCode = -1;
-      stderrTail = String(e);
+      spawnErr = String(e);
       resolve();
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
       exitCode = code;
-      const tail = stderr.slice(-500);
-      if (timedOut) {
-        stderrTail = `ffmpeg timed out after ${TIMEOUT_MS}ms (exit ${code}, last stderr: ${tail || 'empty'})`;
-      } else {
-        stderrTail = tail;
-      }
       resolve();
     });
   });
 
-  // Always inspect what ffmpeg actually wrote, even if it errored.
-  // Many ffmpeg failures (codec, output path, muxer) still leave valid files behind.
-  const { readdir } = await import('node:fs/promises');
-  let files: string[];
+  let files: string[] = [];
   try {
     files = (await readdir(outDir))
       .filter((f) => f.endsWith('.jpg'))
@@ -139,27 +153,70 @@ export async function generateThumbnails(
     files = [];
   }
 
-  if (files.length === 0) {
+  const tail = stderr.slice(-500);
+  let error: string;
+  if (spawnErr) {
+    error = `spawn failed: ${spawnErr}`;
+  } else if (timedOut) {
+    error = `timed out after ${TIMEOUT_MS}ms (exit ${exitCode}, stderr: ${tail || 'empty'})`;
+  } else {
+    error = `exit ${exitCode ?? 'n/a'}${tail ? `: ${tail}` : ''}`;
+  }
+
+  return { files, error, timedOut };
+}
+
+export async function generateThumbnails(
+  videoId: number,
+  videoPath: string,
+  durationSec: number,
+  codec: string | null,
+  codecTag: string | null,
+  onProgress?: (i: number) => void
+): Promise<void> {
+  const outDir = thumbsDirFor(videoPath);
+  await rm(outDir, { recursive: true, force: true });
+  await mkdir(outDir, { recursive: true });
+
+  const interval = Math.max(durationSec / FRAME_COUNT, 0.05);
+
+  const family = codecFamily(codec, codecTag);
+  const candidates = buildCandidates(videoPath, family, interval);
+
+  if (candidates.length === 0) {
     throw new Error(
-      `ffmpeg produced no thumbnails (exit ${exitCode ?? 'n/a'})${stderrTail ? ': ' + stderrTail : ''}`
+      `no ffmpeg decode candidates for codec=${codec ?? '?'}/${codecTag ?? '?'} on ${process.platform}`
     );
   }
 
-  if (files.length < FRAME_COUNT || exitCode !== 0) {
-    console.warn(
-      `[thumbnail] ${basename(videoPath)}: ${files.length}/${FRAME_COUNT} frames (exit ${exitCode ?? 'n/a'})`
-    );
+  const attempts: { label: string; error: string; files: number }[] = [];
+  for (const c of candidates) {
+    const result = await runFfmpeg(c.args, outDir);
+    if (result.files.length > 0) {
+      if (result.files.length < FRAME_COUNT) {
+        console.warn(
+          `[thumbnail] ${basename(videoPath)}: ${result.files.length}/${FRAME_COUNT} frames via ${c.label}`
+        );
+      }
+      const rows: Omit<Thumbnail, 'id'>[] = result.files.map((f, idx) => ({
+        video_id: videoId,
+        frame_index: idx,
+        time_offset: idx * interval,
+        file_path: join(outDir, f)
+      }));
+      insertThumbnails(rows);
+      onProgress?.(rows.length);
+      return;
+    }
+    attempts.push({ label: c.label, error: result.error, files: result.files.length });
   }
 
-  const rows: Omit<Thumbnail, 'id'>[] = files.map((f, idx) => ({
-    video_id: videoId,
-    frame_index: idx,
-    time_offset: idx * interval,
-    file_path: join(outDir, f)
-  }));
-
-  insertThumbnails(rows);
-  onProgress?.(rows.length);
+  const summary = attempts
+    .map((a) => `${a.label} (${a.error})`)
+    .join(' | ');
+  throw new Error(
+    `ffmpeg produced no thumbnails (codec=${codec ?? '?'}/${codecTag ?? '?'}, tried ${attempts.length}: ${summary})`
+  );
 }
 
 export function frameCount(): number {
@@ -177,4 +234,10 @@ export function thumbUrl(absPath: string, thumbsDir: string): string {
   }
   rel = rel.replace(/^\/+/, '');
   return `qfthumb://localhost/${encodeURI(rel)}`;
+}
+
+// Append a cache-busting query string so the browser refetches when the thumb
+// is regenerated (scanned_at advances on each upsert).
+export function cacheBustThumbUrl(url: string, scannedAt: number): string {
+  return `${url}?v=${scannedAt}`;
 }

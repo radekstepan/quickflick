@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell, protocol, net, Menu, MenuItemConstructorOptions } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { access } from 'node:fs/promises';
 import { initDb, closeDb, addRoot, getDbPath, getThumbsDir, listAllVideos } from './db';
 import { registerIpc, setMainWindow, getMainWindow } from './ipc';
 import { scanLibrary } from './scanner';
@@ -165,6 +166,11 @@ app.whenReady().then(() => {
       // Ensure the resolved path is still under the thumbs dir (security)
       if (!filePath.startsWith(getThumbsDir())) {
         return new Response('forbidden', { status: 403 });
+      }
+      try {
+        await access(filePath);
+      } catch {
+        return new Response('not found', { status: 404 });
       }
       return net.fetch(pathToFileURL(filePath).toString());
     } catch (e) {

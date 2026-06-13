@@ -12,11 +12,12 @@ import {
   removeRoot,
   removeThumbsForPaths,
   removeVideosByRoot,
+  resetAllThumbs,
   resetFailedThumbs
 } from './db';
 import { checkFfmpeg, checkFfprobe } from './ffmpeg';
 import { scanLibrary } from './scanner';
-import { thumbUrl } from './thumbnailer';
+import { thumbUrl, cacheBustThumbUrl } from './thumbnailer';
 import type { ListOptions, ScanProgress, ScanResult, VideoWithThumbs } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -107,6 +108,11 @@ export function registerIpc(): void {
     return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
   });
 
+  ipcMain.handle('library:resetAllThumbs', async (): Promise<ScanResult> => {
+    resetAllThumbs();
+    return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
+  });
+
   ipcMain.handle('library:listVideos', async (_e, opts?: ListOptions) => {
     const rows = listVideos(opts ?? {});
     const td = getThumbsDir();
@@ -114,7 +120,7 @@ export function registerIpc(): void {
       ...v,
       thumbnails: v.thumbnails.map((t) => ({
         ...t,
-        url: thumbUrl(t.file_path, td)
+        url: cacheBustThumbUrl(thumbUrl(t.file_path, td), v.scanned_at)
       }))
     }));
   });

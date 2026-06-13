@@ -1,4 +1,4 @@
-import type { ScanProgress } from '@shared/types';
+import type { ScanProgress, ThumbnailFailure } from '@shared/types';
 
 interface Props {
   roots: string[];
@@ -6,7 +6,8 @@ interface Props {
   onAdd: () => void;
   onRescan: () => void;
   onRetryThumbs: () => void;
-  thumbFailures: string[];
+  onResetAllThumbs: () => void;
+  thumbFailures: ThumbnailFailure[];
   search: string;
   onSearchChange: (s: string) => void;
 }
@@ -16,12 +17,24 @@ function basename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
+function codecBreakdown(failures: ThumbnailFailure[]): string {
+  const counts = new Map<string, number>();
+  for (const f of failures) {
+    const key = f.codec ?? 'unknown';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([codec, n]) => `${codec} × ${n}`)
+    .join(', ');
+}
+
 export function Toolbar({
   roots,
   isScanning,
   onAdd,
   onRescan,
   onRetryThumbs,
+  onResetAllThumbs,
   thumbFailures,
   search,
   onSearchChange
@@ -31,6 +44,13 @@ export function Toolbar({
     : roots.length === 1
     ? basename(roots[0])
     : `${roots.length} folders`;
+
+  const failureTooltip = thumbFailures.length
+    ? `${thumbFailures.length} file(s) failed thumbnail generation. Click to retry.\n` +
+      `Codecs: ${codecBreakdown(thumbFailures)}\n\n` +
+      thumbFailures.map((f) => `${f.path} (${f.codec ?? '?'}${f.codecTag ? ` / ${f.codecTag}` : ''})`).join('\n')
+    : '';
+
   return (
     <div className="toolbar">
       <div className={`toolbar-path ${roots.length === 0 ? 'empty' : ''}`} title={roots.join('\n')}>
@@ -49,14 +69,24 @@ export function Toolbar({
         {isScanning ? 'Scanning…' : 'Rescan'}
       </button>
       {thumbFailures.length > 0 ? (
-        <button
-          className="btn thumb-failures"
-          onClick={onRetryThumbs}
-          disabled={isScanning}
-          title={`${thumbFailures.length} file(s) failed thumbnail generation. Click to retry.\n\n${thumbFailures.join('\n')}`}
-        >
-          {thumbFailures.length} failed
-        </button>
+        <div className="thumb-failure-group">
+          <button
+            className="btn thumb-failures"
+            onClick={onRetryThumbs}
+            disabled={isScanning}
+            title={failureTooltip}
+          >
+            {thumbFailures.length} failed
+          </button>
+          <button
+            className="thumb-reset-link"
+            onClick={onResetAllThumbs}
+            disabled={isScanning}
+            title="Wipe all thumbnail files and regenerate from scratch"
+          >
+            Reset all
+          </button>
+        </div>
       ) : null}
       <input
         className="search"

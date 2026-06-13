@@ -1,6 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api';
-import type { FfmpegStatus, ScanProgress, ScanResult, VideoWithThumbs } from '@shared/types';
+import type {
+  FfmpegStatus,
+  ScanProgress,
+  ScanResult,
+  ThumbnailFailure,
+  VideoWithThumbs
+} from '@shared/types';
 
 export interface LibraryState {
   roots: string[];
@@ -9,11 +15,12 @@ export interface LibraryState {
   loading: boolean;
   isScanning: boolean;
   scanProgress: ScanProgress | null;
-  thumbFailures: string[];
+  thumbFailures: ThumbnailFailure[];
   addFolder: () => Promise<void>;
   removeFolder: (path: string) => Promise<void>;
   rescan: () => Promise<void>;
   retryFailedThumbs: () => Promise<void>;
+  resetAllThumbs: () => Promise<void>;
   reload: () => Promise<void>;
   openVideo: (id: number) => Promise<void>;
 }
@@ -30,7 +37,7 @@ export function useLibrary(): LibraryState {
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
-  const [thumbFailures, setThumbFailures] = useState<string[]>([]);
+  const [thumbFailures, setThumbFailures] = useState<ThumbnailFailure[]>([]);
 
   const reload = useCallback(async () => {
     const rows = await api.listVideos();
@@ -106,6 +113,24 @@ export function useLibrary(): LibraryState {
       await reload();
     } catch (e) {
       console.error('Retry failed:', e);
+    } finally {
+      setIsScanning(false);
+      setScanProgress(null);
+    }
+  }, [isScanning, reload]);
+
+  const resetAllThumbs = useCallback(async () => {
+    if (isScanning) return;
+    setIsScanning(true);
+    setScanProgress({ phase: 'walking', processed: 0, total: 0 });
+    setThumbFailures([]);
+    try {
+      const result: ScanResult = await api.resetAllThumbs();
+      console.log('Reset all result:', result);
+      setThumbFailures(result.failedThumbnails);
+      await reload();
+    } catch (e) {
+      console.error('Reset all failed:', e);
     } finally {
       setIsScanning(false);
       setScanProgress(null);
@@ -188,6 +213,7 @@ export function useLibrary(): LibraryState {
     removeFolder,
     rescan,
     retryFailedThumbs,
+    resetAllThumbs,
     reload,
     openVideo
   };

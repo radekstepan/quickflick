@@ -35,12 +35,20 @@ export interface ScanProgress {
   queueDepth?: number;
 }
 
+export interface ThumbnailFailure {
+  path: string;
+  codec: string | null;
+  codecTag: string | null;
+  decodersTried: string[];
+  error: string;
+}
+
 export interface ScanResult {
   added: number;
   updated: number;
   removed: number;
   total: number;
-  failedThumbnails: string[];
+  failedThumbnails: ThumbnailFailure[];
 }
 
 export interface FfmpegStatus {
@@ -70,6 +78,7 @@ export interface Api {
   removeRoot: (path: string) => Promise<RemoveRootResult>;
   rescan: () => Promise<ScanResult>;
   retryFailedThumbs: () => Promise<ScanResult>;
+  resetAllThumbs: () => Promise<ScanResult>;
   listVideos: (opts?: ListOptions) => Promise<VideoWithThumbs[]>;
   openVideo: (id: number) => Promise<void>;
   revealVideo: (id: number) => Promise<void>;

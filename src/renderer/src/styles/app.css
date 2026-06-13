@@ -168,6 +168,33 @@ input {
   color: #ffb8b8;
 }
 
+.thumb-failure-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thumb-reset-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.thumb-reset-link:hover:not(:disabled) {
+  color: #ff9a9a;
+}
+
+.thumb-reset-link:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .btn .spinner {
   width: 12px;
   height: 12px;

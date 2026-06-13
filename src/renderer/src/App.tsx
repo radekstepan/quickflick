@@ -44,6 +44,7 @@ export default function App() {
         onAdd={lib.addFolder}
         onRescan={lib.rescan}
         onRetryThumbs={lib.retryFailedThumbs}
+        onResetAllThumbs={lib.resetAllThumbs}
         thumbFailures={lib.thumbFailures}
         search={search}
         onSearchChange={setSearch}

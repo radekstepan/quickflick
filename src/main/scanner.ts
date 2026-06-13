@@ -1,4 +1,4 @@
-import { readdir, stat, realpath } from 'node:fs/promises';
+import { readdir, stat, realpath, access } from 'node:fs/promises';
 import { join, basename, dirname, extname } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -13,9 +13,9 @@ import {
   getThumbsForVideo
 } from './db';
 import { probeVideo } from './probe';
-import { generateThumbnails, thumbUrl } from './thumbnailer';
+import { generateThumbnails, thumbUrl, cacheBustThumbUrl } from './thumbnailer';
 import { Queue } from './queue';
-import type { ScanProgress, ScanResult, Video, VideoWithThumbs } from '../shared/types';
+import type { ScanProgress, ScanResult, ThumbnailFailure, Video, VideoWithThumbs } from '../shared/types';
 
 const VIDEO_EXTS = new Set([
   '.mov', '.mp4', '.mkv', '.webm', '.m4v', '.avi', '.flv',
@@ -70,7 +70,7 @@ export async function scanLibrary(
   const roots = listRoots();
   if (roots.length === 0) {
     progress({ phase: 'done', processed: 0, total: 0 });
-    return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [] };
+    return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [] as ThumbnailFailure[] };
   }
 
   const realRoots: string[] = [];
@@ -124,7 +124,8 @@ export async function scanLibrary(
   let enqueued = 0;
   let processed = 0;
   const thumbsDir = getThumbsDir();
-  const failedThumbnails: string[] = [];
+  const failedThumbnails: ThumbnailFailure[] = [];
+  let missingThumbs = 0;
 
   const discovered: VideoWithThumbs[] = [];
 
@@ -135,7 +136,24 @@ export async function scanLibrary(
       prev.size !== meta.size ||
       prev.mtime_ms !== meta.mtime_ms ||
       prev.duration == null;
-    const needsThumb = fileChanged || prev?.thumb_status === 'pending';
+
+    let thumbMissing = false;
+    if (prev?.thumb_status === 'ok') {
+      const thumbs = getThumbsForVideo(prev.id);
+      const first = thumbs[0];
+      if (!first) {
+        thumbMissing = true;
+      } else {
+        try {
+          await access(first.file_path);
+        } catch {
+          thumbMissing = true;
+        }
+      }
+    }
+    if (thumbMissing) missingThumbs++;
+
+    const needsThumb = fileChanged || prev?.thumb_status === 'pending' || thumbMissing;
 
     const id = upsertVideo({
       path,
@@ -161,13 +179,23 @@ export async function scanLibrary(
       void thumbQueue.add(async () => {
         processed++;
         let thumbOk = false;
+        let probedCodec: string | null = null;
+        let probedTag: string | null = null;
         try {
           const probe = await probeVideo(path);
           if (!probe.hasVideo) {
             markThumbStatus(id, 'failed');
-            failedThumbnails.push(path);
+            failedThumbnails.push({
+              path,
+              codec: probe.codecName,
+              codecTag: probe.codecTag,
+              decodersTried: [],
+              error: 'ffprobe found no video stream'
+            });
             return;
           }
+          probedCodec = probe.codecName;
+          probedTag = probe.codecTag;
           const v = getVideoByPath(path);
           if (v) {
             upsertVideo({
@@ -183,22 +211,37 @@ export async function scanLibrary(
             });
           }
           if (probe.duration && probe.duration > 0) {
-            await generateThumbnails(id, path, probe.duration, probe.codecName, () => {
-              progress({
-                phase: 'thumbnailing',
-                processed,
-                total: enqueued,
-                currentFile: path,
-                queueDepth: thumbQueue.pending
-              });
-            });
+            await generateThumbnails(
+              id,
+              path,
+              probe.duration,
+              probedCodec,
+              probedTag,
+              () => {
+                progress({
+                  phase: 'thumbnailing',
+                  processed,
+                  total: enqueued,
+                  currentFile: path,
+                  queueDepth: thumbQueue.pending
+                });
+              }
+            );
             markThumbStatus(id, 'ok');
             thumbOk = true;
           }
         } catch (e) {
-          console.error('[thumbnail] failed for', path, e);
+          const message = e instanceof Error ? e.message : String(e);
+          console.error('[thumbnail] failed for', path, message);
           markThumbStatus(id, 'failed');
-          failedThumbnails.push(path);
+          const decodersTried = extractDecodersTried(message);
+          failedThumbnails.push({
+            path,
+            codec: probedCodec,
+            codecTag: probedTag,
+            decodersTried,
+            error: message
+          });
         }
         progress({
           phase: 'thumbnailing',
@@ -212,7 +255,7 @@ export async function scanLibrary(
           if (finalV) {
             const thumbs = getThumbsForVideo(id).map((t) => ({
               ...t,
-              url: thumbUrl(t.file_path, thumbsDir)
+              url: cacheBustThumbUrl(thumbUrl(t.file_path, thumbsDir), finalV.scanned_at)
             }));
             onVideoThumbed({ ...finalV, thumbnails: thumbs });
           }
@@ -225,6 +268,10 @@ export async function scanLibrary(
     onVideosDiscovered(discovered);
   }
 
+  if (missingThumbs > 0) {
+    console.log(`[scan] detected ${missingThumbs} video(s) with missing thumbnails, regenerating`);
+  }
+
   await thumbQueue.drain();
 
   progress({ phase: 'done', processed: enqueued, total: enqueued });
@@ -235,4 +282,13 @@ export async function scanLibrary(
 
 export async function pickInitialFolder(): Promise<string | null> {
   return homedir();
+}
+
+function extractDecodersTried(message: string): string[] {
+  const m = message.match(/tried \d+:\s*(.+?)\)/);
+  if (!m) return [];
+  return m[1]
+    .split('|')
+    .map((s) => s.split('(')[0].trim())
+    .filter(Boolean);
 }

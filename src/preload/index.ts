@@ -17,6 +17,7 @@ const api: Api = {
   removeRoot: (p) => ipcRenderer.invoke('library:removeRoot', p) as Promise<RemoveRootResult>,
   rescan: () => ipcRenderer.invoke('library:rescan') as Promise<ScanResult>,
   retryFailedThumbs: () => ipcRenderer.invoke('library:retryFailedThumbs') as Promise<ScanResult>,
+  resetAllThumbs: () => ipcRenderer.invoke('library:resetAllThumbs') as Promise<ScanResult>,
   listVideos: (opts?: ListOptions) =>
     ipcRenderer.invoke('library:listVideos', opts) as Promise<VideoWithThumbs[]>,
   openVideo: (id) => ipcRenderer.invoke('video:open', id),

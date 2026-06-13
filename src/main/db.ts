@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { app } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { thumbsDirFor } from './thumbnailer';
 import type { Video, Thumbnail, VideoWithThumbs, SortKey } from '../shared/types';
 
@@ -193,6 +193,30 @@ export function resetFailedThumbs(): number {
     .prepare("UPDATE videos SET thumb_status = 'pending' WHERE thumb_status = 'failed'")
     .run();
   return result.changes;
+}
+
+export function resetAllThumbs(): { deletedDirs: number; resetRows: number } {
+  const dir = getThumbsDir();
+  let deletedDirs = 0;
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        try {
+          rmSync(join(dir, e.name), { recursive: true, force: true });
+          deletedDirs++;
+        } catch {
+          // best effort
+        }
+      }
+    }
+  } catch {
+    // dir doesn't exist yet — nothing to do
+  }
+  const result = getDb()
+    .prepare("UPDATE videos SET thumb_status = 'pending' WHERE thumb_status != 'pending'")
+    .run();
+  return { deletedDirs, resetRows: result.changes };
 }
 
 export function getVideoById(id: number): Video | null {
