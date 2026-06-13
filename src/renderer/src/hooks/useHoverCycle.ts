@@ -21,10 +21,16 @@ export interface HoverCycleApi {
  * - If frameCount <= 1, never cycles and stays at 0.
  */
 export function useHoverCycle({ frameCount, intervalMs = 700, enabled = true }: HoverCycleOptions): HoverCycleApi {
-  const [currentFrame, setCurrentFrame] = useState(0);
+  const defaultFrame = Math.max(0, Math.floor(frameCount / 2));
+  const [currentFrame, setCurrentFrame] = useState(defaultFrame);
   const [isHovering, setIsHovering] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const frameRef = useRef(0);
+  const frameRef = useRef(defaultFrame);
+
+  useEffect(() => {
+    setCurrentFrame(defaultFrame);
+    frameRef.current = defaultFrame;
+  }, [defaultFrame]);
 
   const stop = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -50,9 +56,9 @@ export function useHoverCycle({ frameCount, intervalMs = 700, enabled = true }: 
   const onMouseLeave = useCallback(() => {
     setIsHovering(false);
     stop();
-    frameRef.current = 0;
-    setCurrentFrame(0);
-  }, [stop]);
+    frameRef.current = defaultFrame;
+    setCurrentFrame(defaultFrame);
+  }, [stop, defaultFrame]);
 
   useEffect(() => {
     return () => stop();
