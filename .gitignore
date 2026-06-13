@@ -1,0 +1,12 @@
+node_modules
+out
+dist
+release
+.DS_Store
+*.log
+.vite
+.cache
+.idea
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
