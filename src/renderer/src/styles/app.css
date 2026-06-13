@@ -408,6 +408,9 @@ input {
 .card {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 240px;
+  min-height: 220px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 10px;

@@ -1,4 +1,4 @@
-import { forwardRef } from 'react';
+import { forwardRef, useEffect, useRef, useState } from 'react';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { VideoCard } from './VideoCard';
 import type { VideoWithThumbs } from '@shared/types';
@@ -8,20 +8,48 @@ interface Props {
   onOpen: (id: number) => Promise<void>;
 }
 
+const PADDING_X = 32;
+const GAP = 14;
+const MIN_CARD = 240;
+
+function computeColumns(width: number): number {
+  if (width <= 0) return 1;
+  return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
+}
+
 export function VideoGrid({ videos, onOpen }: Props) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [columns, setColumns] = useState<number>(1);
+
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const update = () => setColumns(computeColumns(el.clientWidth));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <VirtuosoGrid
-      data={videos}
-      listClassName="grid-list"
-      itemClassName="grid-item"
-      components={{
-        List: GridList,
-        Item: GridItem,
-        ScrollSeekPlaceholder: Placeholder
-      }}
-      computeItemKey={(_, v) => v.id}
-      itemContent={(_, v) => <VideoCard video={v} onOpen={onOpen} />}
-    />
+    <div
+      ref={hostRef}
+      className="grid-host"
+      style={{ '--grid-cols': columns } as React.CSSProperties}
+    >
+      <VirtuosoGrid
+        data={videos}
+        listClassName="grid-list"
+        itemClassName="grid-item"
+        components={{
+          List: GridList,
+          Item: GridItem,
+          ScrollSeekPlaceholder: Placeholder
+        }}
+        computeItemKey={(_, v) => v.id}
+        itemContent={(_, v) => <VideoCard video={v} onOpen={onOpen} />}
+      />
+    </div>
   );
 }
 
@@ -33,8 +61,9 @@ const GridList = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>
         {...props}
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-          gap: 14,
+          gridTemplateColumns:
+            `repeat(var(--grid-cols, 1), minmax(${MIN_CARD}px, 1fr))`,
+          gap: GAP,
           padding: 16,
           alignContent: 'start',
           ...style
@@ -49,7 +78,7 @@ const GridList = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>
 const GridItem = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   function GridItem({ children, style, ...props }, ref) {
     return (
-      <div ref={ref} {...props} style={{ display: 'flex', ...style }}>
+      <div ref={ref} {...props} style={style}>
         {children}
       </div>
     );
