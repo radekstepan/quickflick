@@ -13,7 +13,7 @@ import {
   getThumbsForVideo
 } from './db';
 import { probeVideo } from './probe';
-import { generateThumbnails, thumbUrl, cacheBustThumbUrl } from './thumbnailer';
+import { generateThumbnails, thumbUrl, cacheBustThumbUrl, frameCount } from './thumbnailer';
 import { Queue } from './queue';
 import type { ScanProgress, ScanResult, ThumbnailFailure, Video, VideoWithThumbs } from '../shared/types';
 
@@ -140,12 +140,11 @@ export async function scanLibrary(
     let thumbMissing = false;
     if (prev?.thumb_status === 'ok') {
       const thumbs = getThumbsForVideo(prev.id);
-      const first = thumbs[0];
-      if (!first) {
+      if (thumbs.length < frameCount()) {
         thumbMissing = true;
       } else {
         try {
-          await access(first.file_path);
+          await access(thumbs[0].file_path);
         } catch {
           thumbMissing = true;
         }
@@ -190,7 +189,8 @@ export async function scanLibrary(
               codec: probe.codecName,
               codecTag: probe.codecTag,
               decodersTried: [],
-              error: 'ffprobe found no video stream'
+              error: 'ffprobe found no video stream',
+              attempts: []
             });
             return;
           }
@@ -210,37 +210,41 @@ export async function scanLibrary(
               codec: probe.codecName
             });
           }
-          if (probe.duration && probe.duration > 0) {
-            await generateThumbnails(
-              id,
-              path,
-              probe.duration,
-              probedCodec,
-              probedTag,
-              () => {
-                progress({
-                  phase: 'thumbnailing',
-                  processed,
-                  total: enqueued,
-                  currentFile: path,
-                  queueDepth: thumbQueue.pending
-                });
-              }
-            );
-            markThumbStatus(id, 'ok');
-            thumbOk = true;
-          }
+          const safeDuration = probe.duration && probe.duration > 0 ? probe.duration : 60;
+          await generateThumbnails(
+            id,
+            path,
+            safeDuration,
+            probedCodec,
+            probedTag,
+            () => {
+              progress({
+                phase: 'thumbnailing',
+                processed,
+                total: enqueued,
+                currentFile: path,
+                queueDepth: thumbQueue.pending
+              });
+            }
+          );
+          markThumbStatus(id, 'ok');
+          thumbOk = true;
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           console.error('[thumbnail] failed for', path, message);
           markThumbStatus(id, 'failed');
-          const decodersTried = extractDecodersTried(message);
+          const attempts =
+            (e as Error & { attempts?: { label: string; error: string }[] }).attempts ?? [];
+          const decodersTried = attempts.length
+            ? attempts.map((a) => a.label)
+            : extractDecodersTried(message);
           failedThumbnails.push({
             path,
             codec: probedCodec,
             codecTag: probedTag,
             decodersTried,
-            error: message
+            error: message,
+            attempts
           });
         }
         progress({

@@ -35,12 +35,18 @@ export interface ScanProgress {
   queueDepth?: number;
 }
 
+export interface ThumbnailAttempt {
+  label: string;
+  error: string;
+}
+
 export interface ThumbnailFailure {
   path: string;
   codec: string | null;
   codecTag: string | null;
   decodersTried: string[];
   error: string;
+  attempts: ThumbnailAttempt[];
 }
 
 export interface ScanResult {

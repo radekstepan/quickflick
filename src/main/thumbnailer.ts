@@ -56,7 +56,7 @@ function buildCandidates(
       '-ss', '0'
     ];
     if (decoder) a.push('-c:v', decoder);
-    a.push('-i', videoPath, '-vf', swFilter, '-frames:v', String(FRAME_COUNT), '-vsync', 'vfr', '-q:v', '2', outPattern);
+    a.push('-i', videoPath, '-map', '0:V:0', '-vf', swFilter, '-frames:v', String(FRAME_COUNT), '-vsync', '1', '-q:v', '2', outPattern);
     return a;
   }
 
@@ -69,9 +69,10 @@ function buildCandidates(
       '-ss', '0',
       '-c:v', decoder,
       '-i', videoPath,
+      '-map', '0:V:0',
       '-vf', vtFilter,
       '-frames:v', String(FRAME_COUNT),
-      '-vsync', 'vfr',
+      '-vsync', '1',
       '-q:v', '2',
       outPattern
     ];
@@ -85,9 +86,11 @@ function buildCandidates(
 
   // 1) Primary path based on detected family.
   if (family === 'hevc') {
-    if (isMac) add('hevc_videotoolbox+scale_vt', vtArgs('hevc_videotoolbox'));
-    add('hevc+scale', swArgs('hevc'));
-    if (isMac) add('h264_videotoolbox+scale_vt', vtArgs('h264_videotoolbox'));
+    if (isMac) {
+      add('hevc_videotoolbox+scale_vt', vtArgs('hevc_videotoolbox'));
+    } else {
+      add('hevc+scale', swArgs('hevc'));
+    }
   } else if (family === 'h264') {
     if (isMac) add('h264_videotoolbox+scale_vt', vtArgs('h264_videotoolbox'));
     add('h264+scale', swArgs('h264'));
@@ -214,9 +217,11 @@ export async function generateThumbnails(
   const summary = attempts
     .map((a) => `${a.label} (${a.error})`)
     .join(' | ');
-  throw new Error(
+  const err: Error & { attempts?: { label: string; error: string }[] } = new Error(
     `ffmpeg produced no thumbnails (codec=${codec ?? '?'}/${codecTag ?? '?'}, tried ${attempts.length}: ${summary})`
   );
+  err.attempts = attempts.map((a) => ({ label: a.label, error: a.error }));
+  throw err;
 }
 
 export function frameCount(): number {

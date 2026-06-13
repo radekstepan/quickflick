@@ -28,6 +28,22 @@ function codecBreakdown(failures: ThumbnailFailure[]): string {
     .join(', ');
 }
 
+function trimError(msg: string, max = 200): string {
+  if (msg.length <= max) return msg;
+  return msg.slice(0, max) + '…';
+}
+
+function formatFailure(f: ThumbnailFailure): string {
+  const header = `${f.path} (${f.codec ?? '?'}${f.codecTag ? ` / ${f.codecTag}` : ''})`;
+  if (!f.attempts || f.attempts.length === 0) {
+    return `${header}\n  ${trimError(f.error)}`;
+  }
+  const items = f.attempts
+    .map((a) => `  • ${a.label}\n    ${trimError(a.error)}`)
+    .join('\n');
+  return `${header}\n${items}`;
+}
+
 export function Toolbar({
   roots,
   isScanning,
@@ -48,7 +64,7 @@ export function Toolbar({
   const failureTooltip = thumbFailures.length
     ? `${thumbFailures.length} file(s) failed thumbnail generation. Click to retry.\n` +
       `Codecs: ${codecBreakdown(thumbFailures)}\n\n` +
-      thumbFailures.map((f) => `${f.path} (${f.codec ?? '?'}${f.codecTag ? ` / ${f.codecTag}` : ''})`).join('\n')
+      thumbFailures.map(formatFailure).join('\n\n')
     : '';
 
   return (

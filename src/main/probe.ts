@@ -26,6 +26,10 @@ interface RawStream {
   codec_tag_string?: string;
   width?: number;
   height?: number;
+  duration?: string;
+  disposition?: {
+    attached_pic?: number;
+  };
 }
 
 interface RawFormat {
@@ -64,12 +68,15 @@ export async function probeVideo(filePath: string): Promise<ProbeResult> {
     return empty;
   }
 
-  const videoStream = parsed.streams?.find((s) => s.codec_type === 'video');
+  const videoStream = parsed.streams?.find(
+    (s) => s.codec_type === 'video' && s.disposition?.attached_pic !== 1
+  );
   if (!videoStream) {
     return empty;
   }
 
-  const duration = parsed.format?.duration ? Number(parsed.format.duration) : null;
+  const durationRaw = parsed.format?.duration ?? videoStream.duration;
+  const duration = durationRaw ? Number(durationRaw) : null;
   return {
     hasVideo: true,
     duration: duration && Number.isFinite(duration) ? duration : null,
