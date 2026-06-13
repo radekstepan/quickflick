@@ -25,70 +25,74 @@ export interface ExtractOptions {
 
 interface Candidate {
   label: string;
-  inputOptions: string[];
-  outputOptions: string[];
+  preInputOptions: string[];
+  sharedInputOptions: string[];
+  perInputSeek: number[];
+  outputSpecs: { options: string[]; filename: string }[];
 }
 
-function buildCandidates(family: CodecFamily, interval: number): Candidate[] {
+function buildCandidates(
+  _videoPath: string,
+  family: CodecFamily,
+  interval: number,
+  _outDir: string,
+  durationSec: number
+): Candidate[] {
   const isMac = process.platform === 'darwin';
   const candidates: Candidate[] = [];
   const seen = new Set<string>();
 
-  function add(label: string, inputOptions: string[], outputOptions: string[]): void {
+  function add(label: string, hwCodec: string | null): void {
     if (seen.has(label)) return;
     seen.add(label);
-    candidates.push({ label, inputOptions, outputOptions });
+
+    const perInputSeek: number[] = [];
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      const natural = i * interval;
+      const clamped = Math.min(natural, Math.max(0, durationSec - 0.5));
+      perInputSeek.push(clamped);
+    }
+
+    const sharedInputOptions: string[] = [];
+    if (hwCodec) {
+      sharedInputOptions.push('-hwaccel', 'videotoolbox', '-c:v', hwCodec);
+    }
+
+    const outputSpecs: { options: string[]; filename: string }[] = [];
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      outputSpecs.push({
+        options: [
+          '-map', `${i}:V:0`,
+          '-frames:v', '1',
+          '-q:v', '2',
+          '-vf', `scale=${TARGET_WIDTH}:-2`
+        ],
+        filename: `thumb_${String(i + 1).padStart(3, '0')}.jpg`
+      });
+    }
+
+    candidates.push({
+      label,
+      preInputOptions: ['-nostdin', '-hide_banner', '-loglevel', 'error', '-y'],
+      sharedInputOptions,
+      perInputSeek,
+      outputSpecs
+    });
   }
 
-  const fps = `fps=1/${interval.toFixed(3)}`;
-  const swFilter = `${fps},scale=${TARGET_WIDTH}:-2`;
-  const vtFilter = `${fps},scale_vt=${TARGET_WIDTH}:-2`;
-
-  const baseInput = ['-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-ss', '0'];
-  const swOutput = [
-    '-map', '0:V:0',
-    '-vf', swFilter,
-    '-frames:v', String(FRAME_COUNT),
-    '-vsync', '1',
-    '-q:v', '2'
-  ];
-  const vtOutput = [
-    '-map', '0:V:0',
-    '-vf', vtFilter,
-    '-frames:v', String(FRAME_COUNT),
-    '-vsync', '1',
-    '-q:v', '2'
-  ];
-  const vtInputBase = [
-    ...baseInput,
-    '-hwaccel', 'videotoolbox',
-    '-hwaccel_output_format', 'videotoolbox_vld'
-  ];
-
-  // Candidates are emitted unconditionally; ffmpeg will fail fast with
-  // "Decoder not found" (~100ms) if a specific decoder isn't compiled in,
-  // and the next candidate takes over. We do NOT gate on `available` because
-  // a misparsed decoder list would otherwise produce zero candidates and
-  // break thumbnail generation for files that ffmpeg can clearly handle.
-
-  // 1) Primary path based on detected family.
   if (family === 'hevc') {
-    if (isMac) {
-      add('hevc_videotoolbox+scale_vt', [...vtInputBase, '-c:v', 'hevc'], vtOutput);
-    } else {
-      add('hevc+scale', [...baseInput, '-c:v', 'hevc'], swOutput);
-    }
+    if (isMac) add('hevc_fastseek_vt', 'hevc');
+    add('hevc_fastseek_sw', null);
   } else if (family === 'h264') {
-    if (isMac) add('h264_videotoolbox+scale_vt', [...vtInputBase, '-c:v', 'h264'], vtOutput);
-    add('h264+scale', [...baseInput, '-c:v', 'h264'], swOutput);
+    if (isMac) add('h264_fastseek_vt', 'h264');
+    add('h264_fastseek_sw', null);
   } else if (family === 'av1') {
-    add('av1+scale', [...baseInput, '-c:v', 'av1'], swOutput);
-    if (isMac) add('hevc_videotoolbox+scale_vt', [...vtInputBase, '-c:v', 'hevc'], vtOutput);
+    add('av1_fastseek_sw', null);
+    if (isMac) add('hevc_fastseek_vt', 'hevc');
   } else {
-    // 2) Unknown codec: try defaults then last-resort VT guesses.
-    add('auto+scale', [...baseInput], swOutput);
-    if (isMac) add('hevc_videotoolbox+scale_vt', [...vtInputBase, '-c:v', 'hevc'], vtOutput);
-    if (isMac) add('h264_videotoolbox+scale_vt', [...vtInputBase, '-c:v', 'h264'], vtOutput);
+    add('auto_fastseek_sw', null);
+    if (isMac) add('hevc_fastseek_vt', 'hevc');
+    if (isMac) add('h264_fastseek_vt', 'h264');
   }
 
   return candidates;
@@ -109,14 +113,31 @@ interface RunResult {
   args: string[];
 }
 
+function buildCommand(
+  videoPath: string,
+  candidate: Candidate,
+  outDir: string
+): ReturnType<typeof ffmpeg> {
+  let command = ffmpeg();
+  for (let i = 0; i < FRAME_COUNT; i++) {
+    const opts: string[] = [];
+    if (i === 0) opts.push(...candidate.preInputOptions);
+    opts.push(...candidate.sharedInputOptions);
+    opts.push('-ss', candidate.perInputSeek[i].toFixed(3));
+    command = command.input(videoPath).inputOptions(opts);
+  }
+  for (const spec of candidate.outputSpecs) {
+    command = command.output(join(outDir, spec.filename)).outputOptions(spec.options);
+  }
+  return command;
+}
+
 async function runFfmpeg(
   videoPath: string,
-  inputOptions: string[],
-  outputOptions: string[],
+  candidate: Candidate,
   outDir: string
 ): Promise<RunResult> {
   const t0 = Date.now();
-  const outPattern = join(outDir, 'thumb_%03d.jpg');
   let stderrFull = '';
   let timedOut = false;
   let settled = false;
@@ -129,10 +150,9 @@ async function runFfmpeg(
     settle(r);
   };
 
-  const command = ffmpeg(videoPath)
-    .inputOptions(inputOptions)
-    .outputOptions(outputOptions)
-    .output(outPattern)
+  const command = buildCommand(videoPath, candidate, outDir);
+
+  command
     .on('stderr', (line: string) => {
       stderrFull += line + '\n';
     })
@@ -183,18 +203,24 @@ async function runFfmpeg(
 
 async function diagnosticRerun(
   videoPath: string,
-  base: { inputOptions: string[]; outputOptions: string[] }
+  base: Candidate,
+  outDir: string
 ): Promise<void> {
   const tmp = join(getThumbsDir(), `diag-${Date.now()}`);
   await mkdir(tmp, { recursive: true });
-  const diagInput = [...base.inputOptions];
-  const diagOutput = [
-    ...base.outputOptions,
-    '-loglevel', 'info',
-    '-err_detect', 'explode',
-    '-fflags', '+discardcorrupt'
-  ];
-  const pattern = join(tmp, 'thumb_%03d.jpg');
+
+  const diagCandidate: Candidate = {
+    label: base.label,
+    preInputOptions: [
+      ...base.preInputOptions,
+      '-loglevel', 'info',
+      '-err_detect', 'explode',
+      '-fflags', '+discardcorrupt'
+    ],
+    sharedInputOptions: base.sharedInputOptions,
+    perInputSeek: base.perInputSeek,
+    outputSpecs: base.outputSpecs
+  };
 
   const t0 = Date.now();
   let stderrFull = '';
@@ -204,10 +230,8 @@ async function diagnosticRerun(
   const done = new Promise<void>((r) => { settle = r; });
   const safe = (): void => { if (!settled) { settled = true; settle(); } };
 
-  ffmpeg(videoPath)
-    .inputOptions(diagInput)
-    .outputOptions(diagOutput)
-    .output(pattern)
+  const command = buildCommand(videoPath, diagCandidate, tmp);
+  command
     .on('stderr', (line: string) => { stderrFull += line + '\n'; })
     .on('error', (err: Error) => {
       stderrFull += `\n[diag-error] ${err.message}\n`;
@@ -226,7 +250,7 @@ async function diagnosticRerun(
   clearTimeout(timer);
   await rm(tmp, { recursive: true, force: true });
 
-  const args = `${diagInput.join(' ')} ${diagOutput.join(' ')}`;
+  const args = command._getArguments().slice(1).join(' ');
   console.warn(
     `[thumbnail:diag] ${basename(videoPath)} args=[${args}] ` +
     `elapsed=${Date.now() - t0}ms exit=${code ?? 'n/a'}\n` +
@@ -249,7 +273,7 @@ export async function generateThumbnails(
   const interval = Math.max(durationSec / FRAME_COUNT, 0.05);
 
   const family = codecFamily(codec, codecTag);
-  const candidates = buildCandidates(family, interval);
+  const candidates = buildCandidates(videoPath, family, interval, outDir, durationSec);
 
   if (candidates.length === 0) {
     throw new Error(
@@ -259,7 +283,7 @@ export async function generateThumbnails(
 
   const attempts: { label: string; error: string; files: number }[] = [];
   for (const c of candidates) {
-    const result = await runFfmpeg(videoPath, c.inputOptions, c.outputOptions, outDir);
+    const result = await runFfmpeg(videoPath, c, outDir);
     if (result.files.length > 0) {
       const tag = result.files.length < FRAME_COUNT ? 'partial' : 'ok';
       const msg =
@@ -294,7 +318,7 @@ export async function generateThumbnails(
   // logs would hide. The result is logged to the console only, not to the
   // IPC payload, so the UI stays clean.
   const first = candidates[0]!;
-  await diagnosticRerun(videoPath, first);
+  await diagnosticRerun(videoPath, first, outDir);
 
   const summary = attempts
     .map((a) => `${a.label} (${a.error})`)
