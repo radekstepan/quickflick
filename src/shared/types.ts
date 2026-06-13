@@ -64,6 +64,8 @@ export interface Api {
   revealVideo: (id: number) => Promise<void>;
   onScanProgress: (cb: (p: ScanProgress) => void) => () => void;
   onMenuCommand: (cb: (cmd: MenuCommand) => void) => () => void;
+  onVideosDiscovered: (cb: (rows: VideoWithThumbs[]) => void) => () => void;
+  onVideoThumbed: (cb: (row: VideoWithThumbs) => void) => () => void;
   getFfmpegStatus: () => Promise<FfmpegStatus>;
   showItemInFolder: (path: string) => Promise<void>;
 }

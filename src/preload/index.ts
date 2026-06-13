@@ -20,6 +20,16 @@ const api: Api = {
     ipcRenderer.on('menu:command', listener);
     return () => ipcRenderer.removeListener('menu:command', listener);
   },
+  onVideosDiscovered: (cb) => {
+    const listener = (_e: unknown, rows: VideoWithThumbs[]) => cb(rows);
+    ipcRenderer.on('library:videosDiscovered', listener);
+    return () => ipcRenderer.removeListener('library:videosDiscovered', listener);
+  },
+  onVideoThumbed: (cb) => {
+    const listener = (_e: unknown, row: VideoWithThumbs) => cb(row);
+    ipcRenderer.on('library:videoThumbed', listener);
+    return () => ipcRenderer.removeListener('library:videoThumbed', listener);
+  },
   getFfmpegStatus: () => ipcRenderer.invoke('ffmpeg:status') as Promise<FfmpegStatus>,
   showItemInFolder: (_path: string) => Promise.resolve()
 };

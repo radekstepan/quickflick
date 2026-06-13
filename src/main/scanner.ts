@@ -6,12 +6,15 @@ import {
   listAllVideos,
   removeStaleVideos,
   upsertVideo,
-  getVideoByPath
+  getVideoById,
+  getVideoByPath,
+  getThumbsDir,
+  getThumbsForVideo
 } from './db';
 import { probeVideo } from './probe';
-import { generateThumbnails } from './thumbnailer';
+import { generateThumbnails, thumbUrl } from './thumbnailer';
 import { Queue } from './queue';
-import type { ScanProgress, ScanResult, Video } from '../shared/types';
+import type { ScanProgress, ScanResult, Video, VideoWithThumbs } from '../shared/types';
 
 const VIDEO_EXTS = new Set([
   '.mov', '.mp4', '.mkv', '.webm', '.m4v', '.avi', '.flv',
@@ -58,7 +61,11 @@ async function walk(root: string, onFile: (abs: string) => Promise<void>, onProg
   return count;
 }
 
-export async function scanLibrary(progress: ProgressFn): Promise<ScanResult> {
+export async function scanLibrary(
+  progress: ProgressFn,
+  onVideosDiscovered: (rows: VideoWithThumbs[]) => void = () => {},
+  onVideoThumbed: (row: VideoWithThumbs) => void = () => {}
+): Promise<ScanResult> {
   const root = getLibrary();
   if (!root) {
     throw new Error('No library folder set');
@@ -109,6 +116,9 @@ export async function scanLibrary(progress: ProgressFn): Promise<ScanResult> {
   const thumbQueue = new Queue(2);
   let enqueued = 0;
   let processed = 0;
+  const thumbsDir = getThumbsDir();
+
+  const discovered: VideoWithThumbs[] = [];
 
   for (const [path, meta] of found) {
     const prev = existing.get(path);
@@ -134,6 +144,10 @@ export async function scanLibrary(progress: ProgressFn): Promise<ScanResult> {
 
     if (needsUpdate) {
       enqueued++;
+      const inserted = getVideoById(id);
+      if (inserted) {
+        discovered.push({ ...inserted, thumbnails: [] });
+      }
       void thumbQueue.add(async () => {
         processed++;
         try {
@@ -176,8 +190,20 @@ export async function scanLibrary(progress: ProgressFn): Promise<ScanResult> {
           currentFile: path,
           queueDepth: thumbQueue.pending
         });
+        const finalV = getVideoById(id);
+        if (finalV) {
+          const thumbs = getThumbsForVideo(id).map((t) => ({
+            ...t,
+            url: thumbUrl(t.file_path, thumbsDir)
+          }));
+          onVideoThumbed({ ...finalV, thumbnails: thumbs });
+        }
       });
     }
+  }
+
+  if (discovered.length > 0) {
+    onVideosDiscovered(discovered);
   }
 
   await thumbQueue.drain();

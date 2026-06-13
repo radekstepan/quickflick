@@ -83,6 +83,29 @@ export function useLibrary(): LibraryState {
     return unsub;
   }, []);
 
+  useEffect(() => {
+    const unsubDiscovered = api.onVideosDiscovered((rows) => {
+      setVideos((prev) => {
+        const byId = new Map(prev.map((v) => [v.id, v]));
+        for (const r of rows) byId.set(r.id, r);
+        return Array.from(byId.values());
+      });
+    });
+    const unsubThumbed = api.onVideoThumbed((row) => {
+      setVideos((prev) => {
+        const idx = prev.findIndex((v) => v.id === row.id);
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    });
+    return () => {
+      unsubDiscovered();
+      unsubThumbed();
+    };
+  }, []);
+
   // Listen for menu commands
   useEffect(() => {
     const unsub = api.onMenuCommand((cmd) => {

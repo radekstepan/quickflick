@@ -4,7 +4,7 @@ import { getLibrary, setLibrary, listVideos, getVideoById, listAllFolders, getTh
 import { checkFfmpeg, checkFfprobe } from './ffmpeg';
 import { scanLibrary } from './scanner';
 import { thumbUrl } from './thumbnailer';
-import type { ListOptions, ScanProgress, ScanResult } from '../shared/types';
+import type { ListOptions, ScanProgress, ScanResult, VideoWithThumbs } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -19,6 +19,18 @@ export function getMainWindow(): BrowserWindow | null {
 function emitProgress(p: ScanProgress): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('scan:progress', p);
+  }
+}
+
+function emitVideosDiscovered(rows: VideoWithThumbs[]): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('library:videosDiscovered', rows);
+  }
+}
+
+function emitVideoThumbed(row: VideoWithThumbs): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('library:videoThumbed', row);
   }
 }
 
@@ -49,7 +61,7 @@ export function registerIpc(): void {
   });
 
   ipcMain.handle('library:rescan', async (): Promise<ScanResult> => {
-    return await scanLibrary(emitProgress);
+    return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
   });
 
   ipcMain.handle('library:listVideos', async (_e, opts?: ListOptions) => {
