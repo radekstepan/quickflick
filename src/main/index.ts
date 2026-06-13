@@ -205,4 +205,13 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   closeDb();
+  // In dev mode, signal the parent (pnpm/electron-vite) so the terminal
+  // returns after Cmd+Q. Controlled by QFKILL_PARENT (set in the dev script).
+  if (process.env['QFKILL_PARENT'] === '1' && process.ppid) {
+    try {
+      process.kill(process.ppid, 'SIGTERM');
+    } catch {
+      // parent already gone
+    }
+  }
 });

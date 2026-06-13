@@ -29,7 +29,9 @@ pnpm install
 pnpm dev
 ```
 
-This starts the Vite dev server and launches Electron with HMR.
+This starts the Vite dev server and launches Electron with HMR. Use **Cmd+Q** (or app menu → Quit QuickFlick) to fully exit and return the terminal — closing the window with the red X / Cmd+W is just "hide" on macOS.
+
+### About the native module rebuild
 
 ### About the native module rebuild
 

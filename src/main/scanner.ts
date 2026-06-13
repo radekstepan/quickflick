@@ -18,6 +18,16 @@ const VIDEO_EXTS = new Set([
   '.wmv', '.mpg', '.mpeg', '.3gp', '.m2ts', '.ts', '.hevc'
 ]);
 
+// Matches a video token followed by -, ., [, ], or end-of-name.
+// Catches scene-release names like "foo.mp4-WRB[XC]" where the trailing
+// ext isn't a video one but the file is still a video.
+const VIDEO_NAME_RE = /\.(mov|mp4|mkv|webm|m4v|avi|flv|wmv|mpg|mpeg|3gp|m2ts|ts|hevc)(?:[-.[\]]|$)/i;
+
+function isVideoFile(name: string): boolean {
+  if (VIDEO_EXTS.has(extname(name).toLowerCase())) return true;
+  return VIDEO_NAME_RE.test(name);
+}
+
 type ProgressFn = (p: ScanProgress) => void;
 
 async function walk(root: string, onFile: (abs: string) => Promise<void>, onProgress?: (count: number) => void): Promise<number> {
@@ -37,8 +47,7 @@ async function walk(root: string, onFile: (abs: string) => Promise<void>, onProg
       if (entry.isDirectory()) {
         stack.push(abs);
       } else if (entry.isFile()) {
-        const ext = extname(entry.name).toLowerCase();
-        if (VIDEO_EXTS.has(ext)) {
+        if (isVideoFile(entry.name)) {
           await onFile(abs);
           count++;
           if (onProgress && count % 25 === 0) onProgress(count);

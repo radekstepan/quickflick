@@ -7,7 +7,7 @@
   "author": "Radek Stepan",
   "scripts": {
     "predev": "node scripts/rebuild-native.cjs",
-    "dev": "electron-vite dev",
+    "dev": "QFKILL_PARENT=1 electron-vite dev",
     "prebuild": "node scripts/rebuild-native.cjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
