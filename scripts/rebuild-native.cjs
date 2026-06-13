@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Re-installs better-sqlite3's native module for the Electron runtime.
-// Needed because pnpm 11 + system Node ABI doesn't produce the right binary
-// for Electron on a no-op `pnpm install`.
+// Layout-agnostic: handles pnpm's .pnpm/ store, yarn's flat node_modules, and npm.
 
 const { spawnSync } = require('node:child_process');
 const { readdirSync, statSync, existsSync, readFileSync } = require('node:fs');
@@ -9,37 +8,55 @@ const { join, resolve } = require('node:path');
 
 const root = resolve(__dirname, '..');
 
-function findPnpmSubdir(pattern) {
+function findPackageDir(pkgName) {
+  // pnpm store layout: node_modules/.pnpm/<pkg>@<ver>/node_modules/<pkg>
   const pnpmRoot = join(root, 'node_modules', '.pnpm');
-  if (!existsSync(pnpmRoot)) return null;
-  for (const entry of readdirSync(pnpmRoot)) {
-    if (pattern.test(entry)) return join(pnpmRoot, entry);
+  if (existsSync(pnpmRoot)) {
+    for (const entry of readdirSync(pnpmRoot)) {
+      if (entry.startsWith(pkgName + '@')) {
+        return join(pnpmRoot, entry, 'node_modules', pkgName);
+      }
+    }
   }
+  // yarn / npm flat layout: node_modules/<pkg>
+  const flat = join(root, 'node_modules', pkgName);
+  if (existsSync(flat)) return flat;
   return null;
 }
 
-// 1) Find the installed Electron version from its package.json
-const electronDir = findPnpmSubdir(/^electron@/);
+function findPrebuildInstall(pkgDir) {
+  // pnpm puts prebuild-install in <pkg>/node_modules/.bin (per-package dep)
+  const nestedBin = join(pkgDir, 'node_modules', '.bin', 'prebuild-install');
+  if (existsSync(nestedBin)) return nestedBin;
+  // yarn/npm hoist to top-level node_modules/.bin
+  const topBin = join(root, 'node_modules', '.bin', 'prebuild-install');
+  if (existsSync(topBin)) return topBin;
+  return null;
+}
+
+function readPackageJson(pkgDir) {
+  return JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
+}
+
+// 1) Find the installed Electron version
+const electronDir = findPackageDir('electron');
 if (!electronDir) {
   console.error('[rebuild-native] electron not found in node_modules');
   process.exit(1);
 }
-const electronPkg = JSON.parse(
-  readFileSync(join(electronDir, 'node_modules', 'electron', 'package.json'), 'utf8')
-);
-const electronVersion = electronPkg.version;
+const electronVersion = readPackageJson(electronDir).version;
 console.log('[rebuild-native] electron version:', electronVersion);
 
 // 2) Find the better-sqlite3 package
-const bsqlDir = findPnpmSubdir(/^better-sqlite3@/);
-if (!bsqlDir) {
+const pkgDir = findPackageDir('better-sqlite3');
+if (!pkgDir) {
   console.error('[rebuild-native] better-sqlite3 not found in node_modules');
   process.exit(1);
 }
-const pkgDir = join(bsqlDir, 'node_modules', 'better-sqlite3');
-const cli = join(pkgDir, 'node_modules', '.bin', 'prebuild-install');
-if (!existsSync(cli)) {
-  console.error('[rebuild-native] prebuild-install not found at', cli);
+
+const cli = findPrebuildInstall(pkgDir);
+if (!cli) {
+  console.error('[rebuild-native] prebuild-install not found (tried nested and top-level)');
   process.exit(1);
 }
 

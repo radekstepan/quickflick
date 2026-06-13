@@ -13,7 +13,9 @@ export function getDbPath(): string {
 }
 
 export function getThumbsDir(): string {
-  const dir = join(app.getPath('userData'), 'thumbs');
+  // macOS: ~/Library/Caches/QuickFlick (no space in path; conventional cache location).
+  // Auto-cleaned by macOS under disk pressure — perfect for regenerable thumbnails.
+  const dir = app.getPath('cache' as 'userData');
   mkdirSync(dir, { recursive: true });
   return dir;
 }

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { getThumbsDir, insertThumbnails, getThumbsForVideo } from './db';
 import type { Thumbnail } from '../shared/types';
 
@@ -50,34 +50,41 @@ export async function generateThumbnails(
     outPattern
   ];
 
-  await new Promise<void>((resolve, reject) => {
+  let exitCode: number | null = null;
+  let stderrTail = '';
+
+  await new Promise<void>((resolve) => {
     let child;
     try {
       child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
     } catch (e) {
-      reject(e);
+      stderrTail = String(e);
+      resolve();
       return;
     }
 
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error('ffmpeg timed out'));
+      stderrTail = 'ffmpeg timed out';
     }, 60_000);
 
     child.stderr?.on('data', (d) => { stderr += d.toString(); });
     child.on('error', (e) => {
       clearTimeout(timer);
-      reject(e);
+      stderrTail = String(e);
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-500)}`));
+      exitCode = code;
+      // Keep the last 500 chars of stderr for debugging
+      stderrTail = stderr.slice(-500);
+      resolve();
     });
   });
 
-  // Read the produced files; filenames will be thumb_001.jpg .. thumb_NNN.jpg
+  // Always inspect what ffmpeg actually wrote, even if it errored.
+  // Many ffmpeg failures (codec, output path, muxer) still leave valid files behind.
   const { readdir } = await import('node:fs/promises');
   let files: string[];
   try {
@@ -88,16 +95,24 @@ export async function generateThumbnails(
     files = [];
   }
 
+  if (files.length === 0) {
+    throw new Error(
+      `ffmpeg produced no thumbnails (exit ${exitCode ?? 'n/a'})${stderrTail ? ': ' + stderrTail : ''}`
+    );
+  }
+
+  if (files.length < FRAME_COUNT || exitCode !== 0) {
+    console.warn(
+      `[thumbnail] ${basename(videoPath)}: ${files.length}/${FRAME_COUNT} frames (exit ${exitCode ?? 'n/a'})`
+    );
+  }
+
   const rows: Omit<Thumbnail, 'id'>[] = files.map((f, idx) => ({
     video_id: videoId,
     frame_index: idx,
     time_offset: idx * interval,
     file_path: join(outDir, f)
   }));
-
-  if (rows.length === 0) {
-    throw new Error('No thumbnails produced');
-  }
 
   insertThumbnails(rows);
   onProgress?.(rows.length);

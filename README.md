@@ -70,7 +70,7 @@ This walks the folder, generates thumbnails, and prints results to stdout.
 | What | Path |
 |---|---|
 | SQLite cache | `~/Library/Application Support/QuickFlick/cache.db` |
-| Thumbnail JPGs | `~/Library/Application Support/QuickFlick/thumbs/<sha1>/thumb_001.jpg..008.jpg` |
+| Thumbnail JPGs | `~/Library/Caches/QuickFlick/thumbs/<sha1>/thumb_001.jpg..008.jpg` |
 | Library path | Stored in the `kv` table inside `cache.db` |
 
 To reset, delete that folder.
