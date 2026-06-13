@@ -8,15 +8,15 @@ import { useLibrary } from './hooks/useLibrary';
 
 export default function App() {
   const lib = useLibrary();
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [ffmpegDismissed, setFfmpegDismissed] = useState(false);
 
   const filtered = useMemo(() => {
     let rows = lib.videos;
-    if (selectedFolder) {
+    if (selectedRoot) {
       rows = rows.filter(
-        (v) => v.folder === selectedFolder || v.folder.startsWith(`${selectedFolder}/`)
+        (v) => v.folder === selectedRoot || v.folder.startsWith(`${selectedRoot}/`)
       );
     }
     if (search.trim()) {
@@ -24,7 +24,7 @@ export default function App() {
       rows = rows.filter((v) => v.filename.toLowerCase().includes(q));
     }
     return rows;
-  }, [lib.videos, selectedFolder, search]);
+  }, [lib.videos, selectedRoot, search]);
 
   if (lib.loading) {
     return (
@@ -39,28 +39,31 @@ export default function App() {
       <div className="titlebar">QuickFlick</div>
 
       <Toolbar
-        library={lib.library}
+        roots={lib.roots}
         isScanning={lib.isScanning}
-        onPick={lib.pickFolder}
+        onAdd={lib.addFolder}
         onRescan={lib.rescan}
+        onRetryThumbs={lib.retryFailedThumbs}
+        thumbFailures={lib.thumbFailures}
         search={search}
         onSearchChange={setSearch}
       />
 
       <Sidebar
+        roots={lib.roots}
         videos={lib.videos}
-        selected={selectedFolder}
-        onSelect={setSelectedFolder}
-        rootPath={lib.library}
+        selectedRoot={selectedRoot}
+        onSelectRoot={setSelectedRoot}
+        onRemoveRoot={lib.removeFolder}
       />
 
       <div className="main">
         <ScanProgressOverlay progress={lib.scanProgress} />
         {lib.videos.length === 0 || filtered.length === 0 ? (
           <EmptyState
-            hasLibrary={Boolean(lib.library)}
+            hasLibrary={lib.roots.length > 0}
             videoCount={lib.videos.length}
-            onPick={lib.pickFolder}
+            onPick={lib.addFolder}
             onRescan={lib.rescan}
           />
         ) : (

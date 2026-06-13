@@ -1,110 +1,106 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { VideoWithThumbs } from '@shared/types';
 
-interface FolderNode {
-  name: string;
-  path: string;
-  count: number;
-  children: FolderNode[];
-}
-
-function buildTree(folders: string[], counts: Map<string, number>): FolderNode[] {
-  const rootMap = new Map<string, FolderNode>();
-
-  // We need a virtual root that aggregates everything.
-  // Sort folders so parents come before children.
-  const sorted = [...folders].sort();
-
-  for (const folder of sorted) {
-    const parts = folder.split('/').filter(Boolean);
-    let parentChildren = rootMap;
-    let acc = '';
-    for (let i = 0; i < parts.length; i++) {
-      acc = acc ? `${acc}/${parts[i]}` : parts[i];
-      let node = parentChildren.get(parts[i]);
-      if (!node) {
-        node = { name: parts[i], path: acc, count: 0, children: [] };
-        parentChildren.set(parts[i], node);
-      }
-      // Increment count at the deepest level (this exact folder)
-      if (i === parts.length - 1) {
-        node.count = counts.get(folder) ?? 0;
-      }
-      parentChildren = new Map(node.children.map((c) => [c.name, c]));
-    }
-  }
-
-  // Recursively aggregate counts from children up
-  function aggregate(n: FolderNode): number {
-    let total = n.count;
-    for (const c of n.children) total += aggregate(c);
-    n.count = total;
-    return total;
-  }
-
-  for (const node of rootMap.values()) aggregate(node);
-  return Array.from(rootMap.values());
-}
-
 interface Props {
+  roots: string[];
   videos: VideoWithThumbs[];
-  selected: string | null;
-  onSelect: (folder: string | null) => void;
-  rootPath: string | null;
+  selectedRoot: string | null;
+  onSelectRoot: (root: string | null) => void;
+  onRemoveRoot: (path: string) => void;
 }
 
-export function Sidebar({ videos, selected, onSelect, rootPath }: Props) {
-  const { tree, rootCount, folders } = useMemo(() => {
-    const set = new Set<string>();
-    const counts = new Map<string, number>();
-    for (const v of videos) {
-      set.add(v.folder);
-      counts.set(v.folder, (counts.get(v.folder) ?? 0) + 1);
-    }
-    const tree = buildTree([...set], counts);
-    const rootCount = videos.length;
-    return { tree, rootCount, folders: [...set] };
-  }, [videos]);
+interface ContextMenu {
+  x: number;
+  y: number;
+  path: string;
+}
 
-  const renderNode = (n: FolderNode, depth: number) => {
-    const isActive = selected === n.path;
-    return (
-      <div key={n.path}>
-        <div
-          className={`sidebar-item ${isActive ? 'active' : ''}`}
-          style={{ paddingLeft: 12 + depth * 14 }}
-          onClick={() => onSelect(n.path)}
-          title={n.path}
-        >
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.name}</span>
-          <span className="count">{n.count}</span>
-        </div>
-        {n.children.map((c) => renderNode(c, depth + 1))}
-      </div>
-    );
-  };
+function basename(p: string): string {
+  const parts = p.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? p;
+}
+
+function rootFor(video: VideoWithThumbs, roots: string[]): string | null {
+  for (const r of roots) {
+    if (video.folder === r || video.folder.startsWith(r + '/')) return r;
+  }
+  return null;
+}
+
+export function Sidebar({ roots, videos, selectedRoot, onSelectRoot, onRemoveRoot }: Props) {
+  const counts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of roots) map.set(r, 0);
+    for (const v of videos) {
+      const r = rootFor(v, roots);
+      if (r) map.set(r, (map.get(r) ?? 0) + 1);
+    }
+    return map;
+  }, [roots, videos]);
+
+  const [menu, setMenu] = useState<ContextMenu | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('.context-menu')) return;
+      setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+
+  if (roots.length === 0) {
+    return <div className="sidebar" />;
+  }
 
   return (
     <div className="sidebar">
       <div className="sidebar-section">Library</div>
-      <div
-        className={`sidebar-item ${selected === null ? 'active' : ''}`}
-        onClick={() => onSelect(null)}
-        title={rootPath ?? ''}
-      >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {rootPath ? rootPath.split('/').pop() || rootPath : 'All videos'}
-        </span>
-        <span className="count">{rootCount}</span>
-      </div>
-
-      {folders.length > 0 ? (
-        <>
-          <div className="sidebar-section" style={{ marginTop: 12 }}>
-            Folders
+      {roots.map((r) => {
+        const isActive = selectedRoot === r;
+        return (
+          <div
+            key={r}
+            className={`sidebar-item ${isActive ? 'active' : ''}`}
+            onClick={() => onSelectRoot(isActive ? null : r)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY, path: r });
+            }}
+            title={r + '\n\nClick to filter · Right-click for options'}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{basename(r)}</span>
+            <span className="count">{counts.get(r) ?? 0}</span>
           </div>
-          {tree.map((n) => renderNode(n, 0))}
-        </>
+        );
+      })}
+
+      {menu ? (
+        <div
+          className="context-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="context-menu-item danger"
+            onClick={() => {
+              const p = menu.path;
+              setMenu(null);
+              void onRemoveRoot(p);
+            }}
+          >
+            Remove folder from library
+          </button>
+        </div>
       ) : null}
     </div>
   );

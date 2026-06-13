@@ -3,49 +3,109 @@ import { api } from '../api';
 import type { FfmpegStatus, ScanProgress, ScanResult, VideoWithThumbs } from '@shared/types';
 
 export interface LibraryState {
-  library: string | null;
+  roots: string[];
   videos: VideoWithThumbs[];
   ffmpeg: FfmpegStatus | null;
   loading: boolean;
   isScanning: boolean;
   scanProgress: ScanProgress | null;
-  pickFolder: () => Promise<void>;
+  thumbFailures: string[];
+  addFolder: () => Promise<void>;
+  removeFolder: (path: string) => Promise<void>;
   rescan: () => Promise<void>;
+  retryFailedThumbs: () => Promise<void>;
   reload: () => Promise<void>;
   openVideo: (id: number) => Promise<void>;
 }
 
+function isSubPathOrEqual(child: string, parent: string): boolean {
+  if (child === parent) return true;
+  return child.startsWith(parent + '/');
+}
+
 export function useLibrary(): LibraryState {
-  const [library, setLibraryState] = useState<string | null>(null);
+  const [roots, setRoots] = useState<string[]>([]);
   const [videos, setVideos] = useState<VideoWithThumbs[]>([]);
   const [ffmpeg, setFfmpeg] = useState<FfmpegStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
+  const [thumbFailures, setThumbFailures] = useState<string[]>([]);
 
   const reload = useCallback(async () => {
     const rows = await api.listVideos();
     setVideos(rows);
   }, []);
 
-  const pickFolder = useCallback(async () => {
+  const addFolder = useCallback(async () => {
     const picked = await api.pickFolder();
-    if (picked) {
-      setLibraryState(picked);
-      setVideos([]);
-    }
-  }, []);
+    if (!picked) return;
+    setRoots((prev) => {
+      if (prev.includes(picked)) return prev;
+      if (prev.some((r) => isSubPathOrEqual(picked, r))) return prev;
+      if (prev.some((r) => isSubPathOrEqual(r, picked))) return prev;
+      return [...prev, picked];
+    });
+    await api.addRoot(picked);
+    void (async () => {
+      setIsScanning(true);
+      setScanProgress({ phase: 'walking', processed: 0, total: 0 });
+      setThumbFailures([]);
+      try {
+        const result: ScanResult = await api.rescan();
+        console.log('Scan result:', result);
+        setThumbFailures(result.failedThumbnails);
+        await reload();
+      } catch (e) {
+        console.error('Scan failed:', e);
+      } finally {
+        setIsScanning(false);
+        setScanProgress(null);
+      }
+    })();
+  }, [reload]);
+
+  const removeFolder = useCallback(
+    async (path: string) => {
+      const result = await api.removeRoot(path);
+      if (result.removedVideos > 0) {
+        setRoots((prev) => prev.filter((r) => r !== path));
+        await reload();
+      }
+    },
+    [reload]
+  );
 
   const rescan = useCallback(async () => {
     if (isScanning) return;
     setIsScanning(true);
     setScanProgress({ phase: 'walking', processed: 0, total: 0 });
+    setThumbFailures([]);
     try {
       const result = await api.rescan();
       console.log('Scan result:', result);
+      setThumbFailures(result.failedThumbnails);
       await reload();
     } catch (e) {
       console.error('Scan failed:', e);
+    } finally {
+      setIsScanning(false);
+      setScanProgress(null);
+    }
+  }, [isScanning, reload]);
+
+  const retryFailedThumbs = useCallback(async () => {
+    if (isScanning) return;
+    setIsScanning(true);
+    setScanProgress({ phase: 'walking', processed: 0, total: 0 });
+    setThumbFailures([]);
+    try {
+      const result: ScanResult = await api.retryFailedThumbs();
+      console.log('Retry result:', result);
+      setThumbFailures(result.failedThumbnails);
+      await reload();
+    } catch (e) {
+      console.error('Retry failed:', e);
     } finally {
       setIsScanning(false);
       setScanProgress(null);
@@ -63,12 +123,12 @@ export function useLibrary(): LibraryState {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [lib, ffm] = await Promise.all([api.getLibrary(), api.getFfmpegStatus()]);
+      const [rs, ffm] = await Promise.all([api.getRoots(), api.getFfmpegStatus()]);
       if (!mounted) return;
-      setLibraryState(lib);
+      setRoots(rs);
       setFfmpeg(ffm);
       setLoading(false);
-      if (lib) {
+      if (rs.length > 0) {
         const rows = await api.listVideos();
         if (mounted) setVideos(rows);
       }
@@ -117,14 +177,17 @@ export function useLibrary(): LibraryState {
   }, [rescan]);
 
   return {
-    library,
+    roots,
     videos,
     ffmpeg,
     loading,
     isScanning,
     scanProgress,
-    pickFolder,
+    thumbFailures,
+    addFolder,
+    removeFolder,
     rescan,
+    retryFailedThumbs,
     reload,
     openVideo
   };

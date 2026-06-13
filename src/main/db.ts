@@ -1,8 +1,11 @@
 import Database from 'better-sqlite3';
 import { app } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
+import { thumbsDirFor } from './thumbnailer';
 import type { Video, Thumbnail, VideoWithThumbs, SortKey } from '../shared/types';
+
+export type ThumbStatus = 'pending' | 'ok' | 'failed';
 
 let db: Database.Database | null = null;
 
@@ -53,11 +56,44 @@ export function initDb(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_thumbnails_video ON thumbnails(video_id);
 
+    CREATE TABLE IF NOT EXISTS library_roots (
+      path     TEXT PRIMARY KEY,
+      added_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
   `);
+
+  // Migrate legacy single-library kv entry into library_roots.
+  const rootCount = (db.prepare('SELECT COUNT(*) AS c FROM library_roots').get() as { c: number }).c;
+  if (rootCount === 0) {
+    const legacy = db
+      .prepare("SELECT value FROM kv WHERE key = 'library'")
+      .get() as { value: string } | undefined;
+    if (legacy?.value) {
+      db.prepare('INSERT OR IGNORE INTO library_roots(path, added_at) VALUES (?, ?)').run(
+        legacy.value,
+        Date.now()
+      );
+      db.prepare("DELETE FROM kv WHERE key = 'library'").run();
+    }
+  }
+
+  // Add per-video thumb tracking columns if missing.
+  if (!hasColumn(db, 'videos', 'codec')) {
+    db.exec('ALTER TABLE videos ADD COLUMN codec TEXT');
+  }
+  if (!hasColumn(db, 'videos', 'thumb_status')) {
+    db.exec("ALTER TABLE videos ADD COLUMN thumb_status TEXT NOT NULL DEFAULT 'pending'");
+  }
+}
+
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return rows.some((r) => r.name === column);
 }
 
 export function closeDb(): void {
@@ -72,21 +108,60 @@ function getDb(): Database.Database {
   return db;
 }
 
-export function getLibrary(): string | null {
-  const row = getDb().prepare("SELECT value FROM kv WHERE key = 'library'").get() as { value: string } | undefined;
-  return row?.value ?? null;
+export function listRoots(): string[] {
+  const rows = getDb()
+    .prepare('SELECT path FROM library_roots ORDER BY added_at, path')
+    .all() as { path: string }[];
+  return rows.map((r) => r.path);
 }
 
-export function setLibrary(path: string): void {
+export function addRoot(path: string): void {
   getDb()
-    .prepare("INSERT INTO kv(key, value) VALUES('library', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-    .run(path);
+    .prepare('INSERT OR IGNORE INTO library_roots(path, added_at) VALUES (?, ?)')
+    .run(path, Date.now());
 }
 
-export function upsertVideo(v: Omit<Video, 'id' | 'scanned_at'>): number {
+export function removeRoot(path: string): void {
+  getDb().prepare('DELETE FROM library_roots WHERE path = ?').run(path);
+}
+
+export function countVideosByRoot(root: string): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS c FROM videos WHERE folder = ? OR folder LIKE ? || '/%'")
+    .get(root, root) as { c: number };
+  return row.c;
+}
+
+export function removeVideosByRoot(root: string): { removed: number; paths: string[] } {
+  const rows = getDb()
+    .prepare("SELECT id, path FROM videos WHERE folder = ? OR folder LIKE ? || '/%'")
+    .all(root, root) as { id: number; path: string }[];
+  if (rows.length === 0) return { removed: 0, paths: [] };
+  const tx = getDb().transaction((ids: number[]) => {
+    const del = getDb().prepare('DELETE FROM videos WHERE id = ?');
+    for (const id of ids) del.run(id);
+  });
+  tx(rows.map((r) => r.id));
+  return { removed: rows.length, paths: rows.map((r) => r.path) };
+}
+
+export function removeThumbsForPaths(paths: string[]): number {
+  let n = 0;
+  for (const p of paths) {
+    try {
+      rmSync(thumbsDirFor(p), { recursive: true, force: true });
+      n++;
+    } catch {
+      // ignore — best effort cleanup
+    }
+  }
+  return n;
+}
+
+export function upsertVideo(v: Omit<Video, 'id' | 'scanned_at' | 'thumb_status'>): number {
   const stmt = getDb().prepare(`
-    INSERT INTO videos (path, folder, filename, size, mtime_ms, duration, width, height, scanned_at)
-    VALUES (@path, @folder, @filename, @size, @mtime_ms, @duration, @width, @height, @scanned_at)
+    INSERT INTO videos (path, folder, filename, size, mtime_ms, duration, width, height, codec, scanned_at)
+    VALUES (@path, @folder, @filename, @size, @mtime_ms, @duration, @width, @height, @codec, @scanned_at)
     ON CONFLICT(path) DO UPDATE SET
       folder = excluded.folder,
       filename = excluded.filename,
@@ -95,11 +170,29 @@ export function upsertVideo(v: Omit<Video, 'id' | 'scanned_at'>): number {
       duration = excluded.duration,
       width = excluded.width,
       height = excluded.height,
-      scanned_at = excluded.scanned_at
+      codec = excluded.codec,
+      scanned_at = excluded.scanned_at,
+      thumb_status = CASE
+        WHEN videos.size != excluded.size
+          OR videos.mtime_ms != excluded.mtime_ms
+        THEN 'pending'
+        ELSE videos.thumb_status
+      END
     RETURNING id
   `);
   const row = stmt.get({ ...v, scanned_at: Date.now() }) as { id: number };
   return row.id;
+}
+
+export function markThumbStatus(id: number, status: ThumbStatus): void {
+  getDb().prepare('UPDATE videos SET thumb_status = ? WHERE id = ?').run(status, id);
+}
+
+export function resetFailedThumbs(): number {
+  const result = getDb()
+    .prepare("UPDATE videos SET thumb_status = 'pending' WHERE thumb_status = 'failed'")
+    .run();
+  return result.changes;
 }
 
 export function getVideoById(id: number): Video | null {

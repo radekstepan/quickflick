@@ -1,3 +1,5 @@
+export type ThumbStatus = 'pending' | 'ok' | 'failed';
+
 export interface Video {
   id: number;
   path: string;
@@ -9,6 +11,8 @@ export interface Video {
   width: number | null;
   height: number | null;
   scanned_at: number;
+  codec: string | null;
+  thumb_status: ThumbStatus;
 }
 
 export interface Thumbnail {
@@ -36,6 +40,7 @@ export interface ScanResult {
   updated: number;
   removed: number;
   total: number;
+  failedThumbnails: string[];
 }
 
 export interface FfmpegStatus {
@@ -54,11 +59,17 @@ export interface ListOptions {
 
 export type MenuCommand = 'rescan';
 
+export interface RemoveRootResult {
+  removedVideos: number;
+}
+
 export interface Api {
   pickFolder: () => Promise<string | null>;
-  setLibrary: (path: string) => Promise<void>;
-  getLibrary: () => Promise<string | null>;
+  addRoot: (path: string) => Promise<void>;
+  getRoots: () => Promise<string[]>;
+  removeRoot: (path: string) => Promise<RemoveRootResult>;
   rescan: () => Promise<ScanResult>;
+  retryFailedThumbs: () => Promise<ScanResult>;
   listVideos: (opts?: ListOptions) => Promise<VideoWithThumbs[]>;
   openVideo: (id: number) => Promise<void>;
   revealVideo: (id: number) => Promise<void>;

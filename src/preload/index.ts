@@ -1,11 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { Api, ListOptions, ScanProgress, FfmpegStatus, ScanResult, VideoWithThumbs, MenuCommand } from '../shared/types';
+import type {
+  Api,
+  ListOptions,
+  RemoveRootResult,
+  ScanProgress,
+  FfmpegStatus,
+  ScanResult,
+  VideoWithThumbs,
+  MenuCommand
+} from '../shared/types';
 
 const api: Api = {
-  pickFolder: () => ipcRenderer.invoke('library:pickFolder'),
-  setLibrary: (p) => ipcRenderer.invoke('library:setLibrary', p),
-  getLibrary: () => ipcRenderer.invoke('library:getLibrary'),
+  pickFolder: () => ipcRenderer.invoke('library:pickFolder') as Promise<string | null>,
+  addRoot: (p) => ipcRenderer.invoke('library:addRoot', p) as Promise<void>,
+  getRoots: () => ipcRenderer.invoke('library:getRoots') as Promise<string[]>,
+  removeRoot: (p) => ipcRenderer.invoke('library:removeRoot', p) as Promise<RemoveRootResult>,
   rescan: () => ipcRenderer.invoke('library:rescan') as Promise<ScanResult>,
+  retryFailedThumbs: () => ipcRenderer.invoke('library:retryFailedThumbs') as Promise<ScanResult>,
   listVideos: (opts?: ListOptions) =>
     ipcRenderer.invoke('library:listVideos', opts) as Promise<VideoWithThumbs[]>,
   openVideo: (id) => ipcRenderer.invoke('video:open', id),

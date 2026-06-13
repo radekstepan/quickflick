@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, protocol, net, Menu, MenuItemConstructorOptions } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { initDb, closeDb, setLibrary, getDbPath, getThumbsDir, listAllVideos } from './db';
+import { initDb, closeDb, addRoot, getDbPath, getThumbsDir, listAllVideos } from './db';
 import { registerIpc, setMainWindow, getMainWindow } from './ipc';
 import { scanLibrary } from './scanner';
 
@@ -126,8 +126,8 @@ function createWindow(): BrowserWindow {
 
 async function runSmokeTest(folder: string): Promise<void> {
   initDb();
-  setLibrary(folder);
-  console.log('[smoke] library =', folder);
+  addRoot(folder);
+  console.log('[smoke] root =', folder);
   console.log('[smoke] db =', getDbPath());
   console.log('[smoke] thumbs =', getThumbsDir());
 

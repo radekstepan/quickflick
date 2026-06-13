@@ -1,6 +1,19 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { realpath } from 'node:fs/promises';
-import { getLibrary, setLibrary, listVideos, getVideoById, listAllFolders, getThumbsDir } from './db';
+import { basename } from 'node:path';
+import {
+  addRoot,
+  countVideosByRoot,
+  getThumbsDir,
+  getVideoById,
+  listAllFolders,
+  listRoots,
+  listVideos,
+  removeRoot,
+  removeThumbsForPaths,
+  removeVideosByRoot,
+  resetFailedThumbs
+} from './db';
 import { checkFfmpeg, checkFfprobe } from './ffmpeg';
 import { scanLibrary } from './scanner';
 import { thumbUrl } from './thumbnailer';
@@ -38,29 +51,59 @@ export function registerIpc(): void {
   ipcMain.handle('library:pickFolder', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
-      title: 'Pick your video library folder'
+      title: 'Pick a folder to add to your library'
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const picked = result.filePaths[0];
-    let real;
     try {
-      real = await realpath(picked);
+      return await realpath(picked);
     } catch {
-      real = picked;
+      return picked;
     }
-    setLibrary(real);
-    return real;
   });
 
-  ipcMain.handle('library:setLibrary', async (_e, p: string) => {
-    setLibrary(p);
+  ipcMain.handle('library:addRoot', async (_e, p: string) => {
+    addRoot(p);
   });
 
-  ipcMain.handle('library:getLibrary', async () => {
-    return getLibrary();
+  ipcMain.handle('library:getRoots', async () => {
+    return listRoots();
+  });
+
+  ipcMain.handle('library:removeRoot', async (_e, p: string): Promise<{ removedVideos: number }> => {
+    const count = countVideosByRoot(p);
+    if (count > 0) {
+      const win = getMainWindow();
+      const options = {
+        type: 'warning' as const,
+        buttons: ['Remove', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        message: `Remove "${basename(p)}" from your library?`,
+        detail: `${count} video${count === 1 ? '' : 's'} will be forgotten. Files on disk are not touched.`
+      };
+      const choice = win
+        ? await dialog.showMessageBox(win, options)
+        : await dialog.showMessageBox(options);
+      if (choice.response !== 0) {
+        return { removedVideos: 0 };
+      }
+    }
+    const { removed, paths } = removeVideosByRoot(p);
+    removeThumbsForPaths(paths);
+    removeRoot(p);
+    return { removedVideos: removed };
   });
 
   ipcMain.handle('library:rescan', async (): Promise<ScanResult> => {
+    return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
+  });
+
+  ipcMain.handle('library:retryFailedThumbs', async (): Promise<ScanResult> => {
+    const resetCount = resetFailedThumbs();
+    if (resetCount === 0) {
+      return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [] };
+    }
     return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
   });
 
@@ -100,7 +143,7 @@ export function registerIpc(): void {
     return { ok: true, version: ff.version };
   });
 
-  ipcMain.on('scan:progress:subscribe', (event) => {
+  ipcMain.on('scan:progress:subscribe', () => {
     // The renderer subscribes by calling onScanProgress; the actual
     // delivery uses webContents.send. This handler is just a no-op
     // marker so the channel exists.

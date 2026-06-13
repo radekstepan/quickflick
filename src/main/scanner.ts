@@ -2,8 +2,9 @@ import { readdir, stat, realpath } from 'node:fs/promises';
 import { join, basename, dirname, extname } from 'node:path';
 import { homedir } from 'node:os';
 import {
-  getLibrary,
+  listRoots,
   listAllVideos,
+  markThumbStatus,
   removeStaleVideos,
   upsertVideo,
   getVideoById,
@@ -66,41 +67,47 @@ export async function scanLibrary(
   onVideosDiscovered: (rows: VideoWithThumbs[]) => void = () => {},
   onVideoThumbed: (row: VideoWithThumbs) => void = () => {}
 ): Promise<ScanResult> {
-  const root = getLibrary();
-  if (!root) {
-    throw new Error('No library folder set');
+  const roots = listRoots();
+  if (roots.length === 0) {
+    progress({ phase: 'done', processed: 0, total: 0 });
+    return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [] };
   }
 
-  let realRoot: string;
-  try {
-    realRoot = await realpath(root);
-  } catch {
-    realRoot = root;
+  const realRoots: string[] = [];
+  for (const r of roots) {
+    try {
+      realRoots.push(await realpath(r));
+    } catch {
+      realRoots.push(r);
+    }
   }
 
   progress({ phase: 'walking', processed: 0, total: 0 });
 
   const found = new Map<string, { size: number; mtime_ms: number; folder: string; filename: string }>();
   let walked = 0;
-  const total = await walk(realRoot, async (abs) => {
-    try {
-      const st = await stat(abs);
-      const folder = dirname(abs);
-      const filename = basename(abs);
-      found.set(abs, {
-        size: st.size,
-        mtime_ms: Math.floor(st.mtimeMs),
-        folder,
-        filename
-      });
-    } catch {
-      // ignore files we can't stat
-    }
-  }, (c) => {
-    walked = c;
-    progress({ phase: 'walking', processed: c, total: 0 });
-  });
+  for (const realRoot of realRoots) {
+    await walk(realRoot, async (abs) => {
+      try {
+        const st = await stat(abs);
+        const folder = dirname(abs);
+        const filename = basename(abs);
+        found.set(abs, {
+          size: st.size,
+          mtime_ms: Math.floor(st.mtimeMs),
+          folder,
+          filename
+        });
+      } catch {
+        // ignore files we can't stat
+      }
+    }, (c) => {
+      walked = c;
+      progress({ phase: 'walking', processed: c, total: 0 });
+    });
+  }
 
+  const total = found.size;
   progress({ phase: 'walking', processed: walked, total });
 
   // Reconcile DB
@@ -117,16 +124,18 @@ export async function scanLibrary(
   let enqueued = 0;
   let processed = 0;
   const thumbsDir = getThumbsDir();
+  const failedThumbnails: string[] = [];
 
   const discovered: VideoWithThumbs[] = [];
 
   for (const [path, meta] of found) {
     const prev = existing.get(path);
-    const needsUpdate =
+    const fileChanged =
       !prev ||
       prev.size !== meta.size ||
       prev.mtime_ms !== meta.mtime_ms ||
       prev.duration == null;
+    const needsThumb = fileChanged || prev?.thumb_status === 'pending';
 
     const id = upsertVideo({
       path,
@@ -136,13 +145,14 @@ export async function scanLibrary(
       mtime_ms: meta.mtime_ms,
       duration: prev?.duration ?? null,
       width: prev?.width ?? null,
-      height: prev?.height ?? null
+      height: prev?.height ?? null,
+      codec: prev?.codec ?? null
     });
 
     if (!prev) added++;
-    else if (needsUpdate) updated++;
+    else if (fileChanged) updated++;
 
-    if (needsUpdate) {
+    if (needsThumb) {
       enqueued++;
       const inserted = getVideoById(id);
       if (inserted) {
@@ -150,12 +160,14 @@ export async function scanLibrary(
       }
       void thumbQueue.add(async () => {
         processed++;
+        let thumbOk = false;
         try {
           const probe = await probeVideo(path);
           if (!probe.hasVideo) {
+            markThumbStatus(id, 'failed');
+            failedThumbnails.push(path);
             return;
           }
-          // update duration/dims
           const v = getVideoByPath(path);
           if (v) {
             upsertVideo({
@@ -166,22 +178,27 @@ export async function scanLibrary(
               mtime_ms: v.mtime_ms,
               duration: probe.duration,
               width: probe.width,
-              height: probe.height
+              height: probe.height,
+              codec: probe.codecName
             });
           }
           if (probe.duration && probe.duration > 0) {
-            await generateThumbnails(id, path, probe.duration, (i) => {
+            await generateThumbnails(id, path, probe.duration, probe.codecName, () => {
               progress({
                 phase: 'thumbnailing',
-                processed: processed,
+                processed,
                 total: enqueued,
                 currentFile: path,
                 queueDepth: thumbQueue.pending
               });
             });
+            markThumbStatus(id, 'ok');
+            thumbOk = true;
           }
         } catch (e) {
           console.error('[thumbnail] failed for', path, e);
+          markThumbStatus(id, 'failed');
+          failedThumbnails.push(path);
         }
         progress({
           phase: 'thumbnailing',
@@ -190,13 +207,15 @@ export async function scanLibrary(
           currentFile: path,
           queueDepth: thumbQueue.pending
         });
-        const finalV = getVideoById(id);
-        if (finalV) {
-          const thumbs = getThumbsForVideo(id).map((t) => ({
-            ...t,
-            url: thumbUrl(t.file_path, thumbsDir)
-          }));
-          onVideoThumbed({ ...finalV, thumbnails: thumbs });
+        if (thumbOk) {
+          const finalV = getVideoById(id);
+          if (finalV) {
+            const thumbs = getThumbsForVideo(id).map((t) => ({
+              ...t,
+              url: thumbUrl(t.file_path, thumbsDir)
+            }));
+            onVideoThumbed({ ...finalV, thumbnails: thumbs });
+          }
         }
       });
     }
@@ -211,7 +230,7 @@ export async function scanLibrary(
   progress({ phase: 'done', processed: enqueued, total: enqueued });
 
   const totalVideos = found.size;
-  return { added, updated, removed, total: totalVideos };
+  return { added, updated, removed, total: totalVideos, failedThumbnails };
 }
 
 export async function pickInitialFolder(): Promise<string | null> {
