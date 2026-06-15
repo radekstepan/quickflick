@@ -117,3 +117,79 @@ export function extractTags(filenames: string[]): Tag[] {
     .map((c) => ({ name: titleCase(c.tokens.join(' ')), count: c.files.size }))
     .sort((a, b) => a.name.localeCompare(b.name) || b.count - a.count);
 }
+
+export function getSubfolderSegments(folder: string, root: string): string[] {
+  let relative: string;
+  if (folder === root) {
+    return [];
+  }
+  if (folder.startsWith(root + '/')) {
+    relative = folder.slice(root.length + 1);
+  } else {
+    relative = folder;
+  }
+  return relative.split('/').filter(Boolean);
+}
+
+export function findRoot(folder: string, roots: string[]): string | null {
+  for (const r of roots) {
+    if (folder === r || folder.startsWith(r + '/')) return r;
+  }
+  return null;
+}
+
+export function videoMatchesTag(
+  video: { filename: string; folder: string },
+  tagName: string,
+  roots: string[]
+): boolean {
+  if (matchesTag(video.filename, tagName)) return true;
+  const root = findRoot(video.folder, roots);
+  if (!root) return false;
+  const segments = getSubfolderSegments(video.folder, root);
+  if (segments.length === 0) return false;
+  return segments.some((seg) => matchesTag(seg, tagName));
+}
+
+export function extractTagsWithFolders(
+  items: Array<{ filename: string; folder: string }>,
+  roots: string[]
+): Tag[] {
+  const base = extractTags(items.map((i) => i.filename));
+  if (base.length === 0) return base;
+
+  const tagNames = base.map((t) => t.name);
+  const baseFilesByTag: Set<string>[] = tagNames.map(() => new Set());
+  for (let i = 0; i < items.length; i++) {
+    const fk = String(i);
+    const f = items[i].filename;
+    for (let t = 0; t < tagNames.length; t++) {
+      if (matchesTag(f, tagNames[t])) baseFilesByTag[t].add(fk);
+    }
+  }
+
+  const enriched = base.map((t) => ({ name: t.name, count: t.count }));
+  for (let i = 0; i < items.length; i++) {
+    const fk = String(i);
+    const item = items[i];
+    const root = findRoot(item.folder, roots);
+    if (!root) continue;
+    const segments = getSubfolderSegments(item.folder, root);
+    if (segments.length === 0) continue;
+    for (let t = 0; t < tagNames.length; t++) {
+      if (baseFilesByTag[t].has(fk)) continue;
+      const tagName = tagNames[t];
+      let matched = false;
+      for (const seg of segments) {
+        if (matchesTag(seg, tagName)) {
+          matched = true;
+          break;
+        }
+      }
+      if (matched) enriched[t].count++;
+    }
+  }
+
+  enriched.sort((a, b) => a.name.localeCompare(b.name) || b.count - a.count);
+  return enriched;
+}

@@ -5,7 +5,7 @@ import { VideoGrid } from './components/VideoGrid';
 import { EmptyState } from './components/EmptyState';
 import { FfmpegMissing } from './components/FfmpegMissing';
 import { useLibrary } from './hooks/useLibrary';
-import { matchesTag } from './utils/tags';
+import { videoMatchesTag } from './utils/tags';
 
 function formatSearchInput(raw: string): string {
   return raw
@@ -39,7 +39,7 @@ export default function App() {
       rows = rows.filter((v) => normalizeForSearch(v.filename).includes(q));
     }
     if (selectedTag) {
-      rows = rows.filter((v) => matchesTag(v.filename, selectedTag));
+      rows = rows.filter((v) => videoMatchesTag(v, selectedTag, lib.roots));
     }
     return rows;
   }, [lib.videos, selectedRoot, selectedTag, search]);

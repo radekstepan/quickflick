@@ -7,7 +7,7 @@ import type {
   ThumbnailFailure,
   VideoWithThumbs
 } from '@shared/types';
-import { extractTags, type Tag } from '../utils/tags';
+import { extractTagsWithFolders, type Tag } from '../utils/tags';
 
 export interface LibraryState {
   roots: string[];
@@ -226,8 +226,12 @@ export function useLibrary(): LibraryState {
   }, []);
 
   const tags = useMemo(
-    () => extractTags(videos.map((v) => v.filename)).filter((t) => !hiddenTags.has(t.name)),
-    [videos, hiddenTags]
+    () =>
+      extractTagsWithFolders(
+        videos.map((v) => ({ filename: v.filename, folder: v.folder })),
+        roots
+      ).filter((t) => !hiddenTags.has(t.name)),
+    [videos, roots, hiddenTags]
   );
 
   useEffect(() => {
