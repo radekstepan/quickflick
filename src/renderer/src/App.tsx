@@ -147,7 +147,7 @@ export default function App() {
     let captured: number[];
     if (sortKey === 'tags') {
       const groups = buildTagGroups(lib.videos, lib.tags, lib.roots);
-      captured = groups.flatMap((g) => g.videos.map((v) => v.id));
+      captured = Array.from(new Set(groups.flatMap((g) => g.videos.map((v) => v.id))));
     } else {
       const sorter = pickSorter(sortKey, lib.roots);
       captured = [...lib.videos].sort(sorter).map((v) => v.id);
@@ -295,17 +295,29 @@ function buildTagGroups(
     return [{ tag: null, videos }];
   }
   const buckets = new Map<string, VideoWithThumbs[]>();
+  const bucketSeen = new Map<string, Set<number>>();
   for (const t of tags) buckets.set(t.name, []);
   const untagged: VideoWithThumbs[] = [];
+  const untaggedSeen = new Set<number>();
   for (const v of videos) {
     const matches = getMatchingTags(v, tags, roots);
     if (matches.length === 0) {
+      if (untaggedSeen.has(v.id)) continue;
+      untaggedSeen.add(v.id);
       untagged.push(v);
       continue;
     }
     for (const name of matches) {
       const bucket = buckets.get(name);
-      if (bucket) bucket.push(v);
+      if (!bucket) continue;
+      let seen = bucketSeen.get(name);
+      if (!seen) {
+        seen = new Set<number>();
+        bucketSeen.set(name, seen);
+      }
+      if (seen.has(v.id)) continue;
+      seen.add(v.id);
+      bucket.push(v);
     }
   }
   const out: VideoGroup[] = [];
