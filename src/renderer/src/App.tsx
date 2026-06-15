@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Toolbar, ScanProgressOverlay } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
 import { VideoGrid } from './components/VideoGrid';
@@ -6,7 +6,7 @@ import { GroupedVideoGrid, type VideoGroup } from './components/GroupedVideoGrid
 import { EmptyState } from './components/EmptyState';
 import { FfmpegMissing } from './components/FfmpegMissing';
 import { useLibrary } from './hooks/useLibrary';
-import { videoMatchesTag, getMatchingTags } from './utils/tags';
+import { videoMatchesTag, getMatchingTags, type Tag } from './utils/tags';
 import { displayName } from './utils/displayName';
 import type { SortKey } from './components/SortDropdown';
 import type { VideoWithThumbs } from '@shared/types';
@@ -24,19 +24,21 @@ function normalizeForSearch(s: string): string {
   return s.toLowerCase().replace(/[-_.]+/g, ' ');
 }
 
-function byFilename(roots: string[]) {
-  return (a: VideoWithThumbs, b: VideoWithThumbs): number =>
-    displayName(a.filename, a.folder, roots).localeCompare(
-      displayName(b.filename, b.folder, roots)
-    );
-}
+const VALID_SORT_KEYS: ReadonlySet<SortKey> = new Set([
+  'name',
+  'tags',
+  'newest',
+  'oldest',
+  'mostViews',
+  'leastViews'
+]);
 
 const SORT_KEY_STORAGE = 'qf:sortKey';
 
 function loadSortKey(): SortKey {
   try {
     const raw = localStorage.getItem(SORT_KEY_STORAGE);
-    if (raw === 'name' || raw === 'tags') return raw;
+    if (raw && VALID_SORT_KEYS.has(raw as SortKey)) return raw as SortKey;
   } catch {
     // ignore
   }
@@ -51,6 +53,52 @@ function saveSortKey(key: SortKey): void {
   }
 }
 
+type Sorter = (a: VideoWithThumbs, b: VideoWithThumbs) => number;
+
+function byFilename(roots: string[]): Sorter {
+  return (a, b) =>
+    displayName(a.filename, a.folder, roots).localeCompare(
+      displayName(b.filename, b.folder, roots)
+    );
+}
+
+function byMtime(dir: 'asc' | 'desc'): Sorter {
+  return (a, b) => {
+    const av = a.mtime_ms ?? 0;
+    const bv = b.mtime_ms ?? 0;
+    if (av === bv) return 0;
+    return dir === 'desc' ? bv - av : av - bv;
+  };
+}
+
+function byViewCount(dir: 'asc' | 'desc'): Sorter {
+  return (a, b) => {
+    const av = a.view_count ?? 0;
+    const bv = b.view_count ?? 0;
+    if (av === bv) return 0;
+    return dir === 'desc' ? bv - av : av - bv;
+  };
+}
+
+function pickSorter(key: SortKey, roots: string[]): Sorter {
+  switch (key) {
+    case 'newest':
+      return byMtime('desc');
+    case 'oldest':
+      return byMtime('asc');
+    case 'mostViews':
+      return byViewCount('desc');
+    case 'leastViews':
+      return byViewCount('asc');
+    case 'name':
+      return byFilename(roots);
+    case 'tags':
+      // For 'tags', the actual ordering is by group then by frozen order.
+      // We still return a fallback so capture doesn't crash on empty sets.
+      return byFilename(roots);
+  }
+}
+
 export default function App() {
   const lib = useLibrary();
   const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
@@ -58,6 +106,14 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [ffmpegDismissed, setFfmpegDismissed] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>(loadSortKey);
+
+  // Frozen display order: captured once when lib.videos first becomes
+  // non-empty, and re-captured when the user picks a new sort key. Click
+  // events, rescans, and filter changes do NOT update this order during
+  // the current session. The new order takes effect on next app launch.
+  const [frozenOrder, setFrozenOrder] = useState<number[] | null>(null);
+  const capturedSortKeyRef = useRef<SortKey | null>(null);
+  const initialCapturedRef = useRef(false);
 
   useEffect(() => {
     saveSortKey(sortKey);
@@ -73,62 +129,88 @@ export default function App() {
     }
   }, [lib.roots, selectedRoot]);
 
-  const filtered = useMemo(() => {
-    let rows = lib.videos;
-    if (selectedRoot) {
-      rows = rows.filter(
-        (v) => v.folder === selectedRoot || v.folder.startsWith(`${selectedRoot}/`)
-      );
+  // Capture (or re-capture on sort change). Narrow deps on purpose:
+  // we explicitly do NOT want this to re-run on rescan, filter, or
+  // lib.videos mutation.
+  useEffect(() => {
+    if (lib.videos.length === 0) {
+      if (frozenOrder !== null) setFrozenOrder(null);
+      capturedSortKeyRef.current = null;
+      initialCapturedRef.current = false;
+      return;
     }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      rows = rows.filter((v) =>
-        normalizeForSearch(displayName(v.filename, v.folder, lib.roots)).includes(q)
-      );
-    }
-    if (selectedTag) {
-      rows = rows.filter((v) => videoMatchesTag(v, selectedTag, lib.roots));
-    }
-    return rows;
-  }, [lib.videos, selectedRoot, selectedTag, search, lib.roots]);
+    if (initialCapturedRef.current && capturedSortKeyRef.current === sortKey) return;
 
-  const sortedByName = useMemo(
-    () => [...filtered].sort(byFilename(lib.roots)),
-    [filtered, lib.roots]
+    // For 'tags', capture in alphabetical-by-group order, then frozen
+    // order within each group. For everything else, capture via the
+    // chosen sorter.
+    let captured: number[];
+    if (sortKey === 'tags') {
+      const groups = buildTagGroups(lib.videos, lib.tags, lib.roots);
+      captured = groups.flatMap((g) => g.videos.map((v) => v.id));
+    } else {
+      const sorter = pickSorter(sortKey, lib.roots);
+      captured = [...lib.videos].sort(sorter).map((v) => v.id);
+    }
+    setFrozenOrder(captured);
+    capturedSortKeyRef.current = sortKey;
+    initialCapturedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lib.videos.length, sortKey]);
+
+  // Sync frozen order with lib.videos on rescan: drop missing IDs,
+  // append newly-discovered IDs to the end.
+  useEffect(() => {
+    if (frozenOrder === null) return;
+    const libIds = new Set(lib.videos.map((v) => v.id));
+    const known = new Set(frozenOrder);
+    const kept = frozenOrder.filter((id) => libIds.has(id));
+    const added = lib.videos.map((v) => v.id).filter((id) => !known.has(id));
+    if (kept.length !== frozenOrder.length || added.length > 0) {
+      setFrozenOrder([...kept, ...added]);
+    }
+  }, [lib.videos, frozenOrder]);
+
+  const videosById = useMemo(
+    () => new Map(lib.videos.map((v) => [v.id, v])),
+    [lib.videos]
+  );
+
+  // Apply current root/search/tag filter on top of the frozen order.
+  const displayIds = useMemo(() => {
+    if (frozenOrder === null) return [] as number[];
+    const q = search.trim().toLowerCase();
+    return frozenOrder.filter((id) => {
+      const v = videosById.get(id);
+      if (!v) return false;
+      if (selectedRoot) {
+        if (v.folder !== selectedRoot && !v.folder.startsWith(`${selectedRoot}/`)) {
+          return false;
+        }
+      }
+      if (q) {
+        const name = normalizeForSearch(displayName(v.filename, v.folder, lib.roots));
+        if (!name.includes(q)) return false;
+      }
+      if (selectedTag && !videoMatchesTag(v, selectedTag, lib.roots)) return false;
+      return true;
+    });
+  }, [frozenOrder, videosById, selectedRoot, selectedTag, search, lib.roots]);
+
+  const displayVideos = useMemo(
+    () =>
+      displayIds
+        .map((id) => videosById.get(id))
+        .filter((v): v is VideoWithThumbs => v !== undefined),
+    [displayIds, videosById]
   );
 
   const groupsByTag = useMemo<VideoGroup[]>(() => {
     if (lib.tags.length === 0) {
-      return [{ tag: null, videos: [...filtered].sort(byFilename(lib.roots)) }];
+      return [{ tag: null, videos: displayVideos }];
     }
-    const buckets = new Map<string, VideoWithThumbs[]>();
-    for (const t of lib.tags) buckets.set(t.name, []);
-    const untagged: VideoWithThumbs[] = [];
-    for (const v of filtered) {
-      const matches = getMatchingTags(v, lib.tags, lib.roots);
-      if (matches.length === 0) {
-        untagged.push(v);
-        continue;
-      }
-      for (const name of matches) {
-        const bucket = buckets.get(name);
-        if (bucket) bucket.push(v);
-      }
-    }
-    const out: VideoGroup[] = [];
-    const tagNames = Array.from(buckets.keys()).sort((a, b) => a.localeCompare(b));
-    for (const name of tagNames) {
-      const videos = buckets.get(name)!;
-      if (videos.length === 0) continue;
-      videos.sort(byFilename(lib.roots));
-      out.push({ tag: name, videos });
-    }
-    if (untagged.length > 0) {
-      untagged.sort(byFilename(lib.roots));
-      out.push({ tag: null, videos: untagged });
-    }
-    return out;
-  }, [filtered, lib.tags, lib.roots]);
+    return buildTagGroups(displayVideos, lib.tags, lib.roots);
+  }, [displayVideos, lib.tags, lib.roots]);
 
   if (lib.loading) {
     return (
@@ -170,7 +252,7 @@ export default function App() {
 
       <div className="main">
         <ScanProgressOverlay progress={lib.scanProgress} />
-        {lib.videos.length === 0 || filtered.length === 0 ? (
+        {lib.videos.length === 0 || displayVideos.length === 0 ? (
           <EmptyState
             hasLibrary={lib.roots.length > 0}
             videoCount={lib.videos.length}
@@ -182,9 +264,15 @@ export default function App() {
             groups={groupsByTag}
             roots={lib.roots}
             onOpen={lib.openVideo}
+            getViewCount={lib.getViewCount}
           />
         ) : (
-          <VideoGrid videos={sortedByName} roots={lib.roots} onOpen={lib.openVideo} />
+          <VideoGrid
+            videos={displayVideos}
+            roots={lib.roots}
+            onOpen={lib.openVideo}
+            getViewCount={lib.getViewCount}
+          />
         )}
       </div>
 
@@ -196,4 +284,39 @@ export default function App() {
       ) : null}
     </div>
   );
+}
+
+function buildTagGroups(
+  videos: VideoWithThumbs[],
+  tags: ReadonlyArray<Tag>,
+  roots: string[]
+): VideoGroup[] {
+  if (tags.length === 0) {
+    return [{ tag: null, videos }];
+  }
+  const buckets = new Map<string, VideoWithThumbs[]>();
+  for (const t of tags) buckets.set(t.name, []);
+  const untagged: VideoWithThumbs[] = [];
+  for (const v of videos) {
+    const matches = getMatchingTags(v, tags, roots);
+    if (matches.length === 0) {
+      untagged.push(v);
+      continue;
+    }
+    for (const name of matches) {
+      const bucket = buckets.get(name);
+      if (bucket) bucket.push(v);
+    }
+  }
+  const out: VideoGroup[] = [];
+  const tagNames = Array.from(buckets.keys()).sort((a, b) => a.localeCompare(b));
+  for (const name of tagNames) {
+    const bucket = buckets.get(name)!;
+    if (bucket.length === 0) continue;
+    out.push({ tag: name, videos: bucket });
+  }
+  if (untagged.length > 0) {
+    out.push({ tag: null, videos: untagged });
+  }
+  return out;
 }

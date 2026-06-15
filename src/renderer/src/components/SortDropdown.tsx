@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
-export type SortKey = 'name' | 'tags';
+export type SortKey =
+  | 'name'
+  | 'tags'
+  | 'newest'
+  | 'oldest'
+  | 'mostViews'
+  | 'leastViews';
 
 interface Option {
   value: SortKey;
@@ -9,7 +15,11 @@ interface Option {
 
 const OPTIONS: Option[] = [
   { value: 'name', label: 'Name' },
-  { value: 'tags', label: 'Tags' }
+  { value: 'tags', label: 'Tags' },
+  { value: 'newest', label: 'Date added (newest)' },
+  { value: 'oldest', label: 'Date added (oldest)' },
+  { value: 'mostViews', label: 'Most viewed' },
+  { value: 'leastViews', label: 'Least viewed' }
 ];
 
 interface Props {

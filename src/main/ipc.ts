@@ -6,6 +6,7 @@ import {
   countVideosByRoot,
   getThumbsDir,
   getVideoById,
+  incrementViewCount,
   listAllFolders,
   listRoots,
   listVideos,
@@ -129,11 +130,13 @@ export function registerIpc(): void {
     return listAllFolders();
   });
 
-  ipcMain.handle('video:open', async (_e, id: number) => {
+  ipcMain.handle('video:open', async (_e, id: number): Promise<number> => {
     const v = getVideoById(id);
     if (!v) throw new Error('Video not found');
+    const newCount = incrementViewCount(id);
     const result = await shell.openPath(v.path);
     if (result) throw new Error(result);
+    return newCount;
   });
 
   ipcMain.handle('video:reveal', async (_e, id: number) => {

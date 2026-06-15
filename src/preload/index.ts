@@ -20,7 +20,7 @@ const api: Api = {
   resetAllThumbs: () => ipcRenderer.invoke('library:resetAllThumbs') as Promise<ScanResult>,
   listVideos: (opts?: ListOptions) =>
     ipcRenderer.invoke('library:listVideos', opts) as Promise<VideoWithThumbs[]>,
-  openVideo: (id) => ipcRenderer.invoke('video:open', id),
+  openVideo: (id) => ipcRenderer.invoke('video:open', id) as Promise<number>,
   revealVideo: (id) => ipcRenderer.invoke('video:reveal', id),
   onScanProgress: (cb) => {
     const listener = (_e: unknown, p: ScanProgress) => cb(p);

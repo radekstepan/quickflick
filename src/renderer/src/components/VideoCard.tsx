@@ -28,6 +28,11 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+function formatViews(n: number): string {
+  if (n === 1) return '1 view';
+  return `${n} views`;
+}
+
 export function VideoCard({ video, roots, onOpen }: Props) {
   const urls = useMemo(
     () =>
@@ -88,6 +93,8 @@ export function VideoCard({ video, roots, onOpen }: Props) {
           {video.width && video.height ? <span>{video.width}×{video.height}</span> : null}
           {video.width && video.height ? <span className="dot" /> : null}
           <span>{formatSize(video.size)}</span>
+          <span className="dot" />
+          <span>{formatViews(video.view_count)}</span>
         </div>
       </div>
     </div>

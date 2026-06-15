@@ -13,6 +13,7 @@ export interface Video {
   scanned_at: number;
   codec: string | null;
   thumb_status: ThumbStatus;
+  view_count: number;
 }
 
 export interface Thumbnail {
@@ -63,7 +64,14 @@ export interface FfmpegStatus {
   installHint?: string;
 }
 
-export type SortKey = 'name' | 'mtime' | 'size' | 'duration';
+export type SortKey =
+  | 'name'
+  | 'mtime'
+  | 'mtime_asc'
+  | 'size'
+  | 'duration'
+  | 'viewCount'
+  | 'viewCount_asc';
 
 export interface ListOptions {
   folder?: string;
@@ -86,7 +94,7 @@ export interface Api {
   retryFailedThumbs: () => Promise<ScanResult>;
   resetAllThumbs: () => Promise<ScanResult>;
   listVideos: (opts?: ListOptions) => Promise<VideoWithThumbs[]>;
-  openVideo: (id: number) => Promise<void>;
+  openVideo: (id: number) => Promise<number>;
   revealVideo: (id: number) => Promise<void>;
   onScanProgress: (cb: (p: ScanProgress) => void) => () => void;
   onMenuCommand: (cb: (cmd: MenuCommand) => void) => () => void;

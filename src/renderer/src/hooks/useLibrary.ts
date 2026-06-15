@@ -25,10 +25,11 @@ export interface LibraryState {
   retryFailedThumbs: () => Promise<void>;
   resetAllThumbs: () => Promise<void>;
   reload: () => Promise<void>;
-  openVideo: (id: number) => Promise<void>;
+  openVideo: (id: number) => Promise<number>;
   hideTag: (name: string) => void;
   unhideTag: (name: string) => void;
   unhideAllTags: () => void;
+  getViewCount: (id: number, fallback: number) => number;
 }
 
 function isSubPathOrEqual(child: string, parent: string): boolean {
@@ -67,6 +68,9 @@ export function useLibrary(): LibraryState {
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [thumbFailures, setThumbFailures] = useState<ThumbnailFailure[]>([]);
+  const [viewCountOverrides, setViewCountOverrides] = useState<Map<number, number>>(
+    () => new Map()
+  );
 
   const hideTag = useCallback((name: string) => {
     setHiddenTags((prev) => {
@@ -194,13 +198,28 @@ export function useLibrary(): LibraryState {
     }
   }, [isScanning, reload]);
 
-  const openVideo = useCallback(async (id: number) => {
+  const openVideo = useCallback(async (id: number): Promise<number> => {
     try {
-      await api.openVideo(id);
+      const next = await api.openVideo(id);
+      setViewCountOverrides((prev) => {
+        const m = new Map(prev);
+        m.set(id, next);
+        return m;
+      });
+      return next;
     } catch (e) {
       console.error('Open failed:', e);
+      return 0;
     }
   }, []);
+
+  const getViewCount = useCallback(
+    (id: number, fallback: number): number => {
+      const v = viewCountOverrides.get(id);
+      return v ?? fallback;
+    },
+    [viewCountOverrides]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -286,6 +305,7 @@ export function useLibrary(): LibraryState {
     openVideo,
     hideTag,
     unhideTag,
-    unhideAllTags
+    unhideAllTags,
+    getViewCount
   };
 }

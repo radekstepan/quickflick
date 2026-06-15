@@ -89,6 +89,9 @@ export function initDb(): void {
   if (!hasColumn(db, 'videos', 'thumb_status')) {
     db.exec("ALTER TABLE videos ADD COLUMN thumb_status TEXT NOT NULL DEFAULT 'pending'");
   }
+  if (!hasColumn(db, 'videos', 'view_count')) {
+    db.exec('ALTER TABLE videos ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
@@ -158,7 +161,9 @@ export function removeThumbsForPaths(paths: string[]): number {
   return n;
 }
 
-export function upsertVideo(v: Omit<Video, 'id' | 'scanned_at' | 'thumb_status'>): number {
+export function upsertVideo(
+  v: Omit<Video, 'id' | 'scanned_at' | 'thumb_status' | 'view_count'>
+): number {
   const stmt = getDb().prepare(`
     INSERT INTO videos (path, folder, filename, size, mtime_ms, duration, width, height, codec, scanned_at)
     VALUES (@path, @folder, @filename, @size, @mtime_ms, @duration, @width, @height, @codec, @scanned_at)
@@ -186,6 +191,13 @@ export function upsertVideo(v: Omit<Video, 'id' | 'scanned_at' | 'thumb_status'>
 
 export function markThumbStatus(id: number, status: ThumbStatus): void {
   getDb().prepare('UPDATE videos SET thumb_status = ? WHERE id = ?').run(status, id);
+}
+
+export function incrementViewCount(id: number): number {
+  const row = getDb()
+    .prepare('UPDATE videos SET view_count = view_count + 1 WHERE id = ? RETURNING view_count')
+    .get(id) as { view_count: number } | undefined;
+  return row?.view_count ?? 0;
 }
 
 export function resetFailedThumbs(): number {
@@ -251,10 +263,13 @@ export function listVideos(opts: { folder?: string; search?: string; sort?: Sort
   const sortCol = {
     name: 'filename',
     mtime: 'mtime_ms',
+    mtime_asc: 'mtime_ms',
     size: 'size',
-    duration: 'duration'
+    duration: 'duration',
+    viewCount: 'view_count',
+    viewCount_asc: 'view_count'
   }[sort];
-  const sortDir = sort === 'mtime' ? 'DESC' : 'ASC';
+  const sortDir = sort === 'mtime_asc' || sort === 'viewCount_asc' ? 'ASC' : 'DESC';
 
   const where: string[] = [];
   const params: Record<string, unknown> = {};

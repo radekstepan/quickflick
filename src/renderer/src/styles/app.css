@@ -237,7 +237,7 @@ input {
 .sort-menu {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
+  left: 0;
   z-index: 200;
   min-width: 160px;
   background: var(--bg-elev-2);
