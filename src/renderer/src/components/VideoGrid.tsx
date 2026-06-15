@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useRef, useState } from 'react';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { VideoCard } from './VideoCard';
+import { useViewportPrefetch } from '../hooks/useViewportPrefetch';
 import type { VideoWithThumbs } from '@shared/types';
 
 interface Props {
@@ -20,6 +21,9 @@ function computeColumns(width: number): number {
 export function VideoGrid({ videos, onOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(1);
+  const [visibleRange, setVisibleRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
+
+  useViewportPrefetch(videos, visibleRange);
 
   useEffect(() => {
     const el = hostRef.current;
@@ -46,6 +50,7 @@ export function VideoGrid({ videos, onOpen }: Props) {
           Item: GridItem,
           ScrollSeekPlaceholder: Placeholder
         }}
+        rangeChanged={({ startIndex, endIndex }) => setVisibleRange({ startIndex, endIndex })}
         computeItemKey={(_, v) => v.id}
         itemContent={(_, v) => <VideoCard video={v} onOpen={onOpen} />}
       />

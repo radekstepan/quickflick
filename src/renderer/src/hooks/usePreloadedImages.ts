@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isPrefetched } from '../prefetch';
 
 export interface PreloadedImages {
   loaded: boolean[];
@@ -8,9 +9,11 @@ export interface PreloadedImages {
 /**
  * Preload a list of image URLs and report which ones are loaded.
  * Returns an array of booleans parallel to urls.
+ * If a URL has already been prefetched at the module level, the
+ * initial state reflects that and no new Image() is created.
  */
 export function usePreloadedImages(urls: string[]): boolean[] {
-  const [loaded, setLoaded] = useState<boolean[]>(() => urls.map(() => false));
+  const [loaded, setLoaded] = useState<boolean[]>(() => urls.map((u) => isPrefetched(u)));
   const cacheRef = useRef<HTMLImageElement[]>([]);
 
   useEffect(() => {
@@ -19,19 +22,20 @@ export function usePreloadedImages(urls: string[]): boolean[] {
       return;
     }
 
-    setLoaded(urls.map(() => false));
+    const flags: boolean[] = urls.map((u) => isPrefetched(u));
+    setLoaded(flags);
     cacheRef.current = [];
 
-    const flags: boolean[] = urls.map(() => false);
     urls.forEach((url, i) => {
+      if (flags[i]) return;
       const img = new Image();
+      img.decoding = 'async';
       cacheRef.current[i] = img;
       img.onload = () => {
         flags[i] = true;
         setLoaded([...flags]);
       };
       img.onerror = () => {
-        flags[i] = false;
         setLoaded([...flags]);
       };
       img.src = url;

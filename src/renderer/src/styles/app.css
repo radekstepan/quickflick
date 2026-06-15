@@ -430,7 +430,7 @@ input {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #000;
+  background: var(--bg-elev-2);
   overflow: hidden;
 }
 
