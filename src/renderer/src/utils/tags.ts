@@ -151,6 +151,19 @@ export function videoMatchesTag(
   return segments.some((seg) => matchesTag(seg, tagName));
 }
 
+export function getMatchingTags(
+  video: { filename: string; folder: string },
+  tags: ReadonlyArray<Tag>,
+  roots: string[]
+): string[] {
+  const matches: string[] = [];
+  for (const t of tags) {
+    if (videoMatchesTag(video, t.name, roots)) matches.push(t.name);
+  }
+  matches.sort((a, b) => a.localeCompare(b));
+  return matches;
+}
+
 export function extractTagsWithFolders(
   items: Array<{ filename: string; folder: string }>,
   roots: string[]

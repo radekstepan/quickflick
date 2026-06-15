@@ -1,4 +1,5 @@
 import type { ScanProgress, ThumbnailFailure } from '@shared/types';
+import { SortDropdown, type SortKey } from './SortDropdown';
 
 interface Props {
   roots: string[];
@@ -10,6 +11,8 @@ interface Props {
   thumbFailures: ThumbnailFailure[];
   search: string;
   onSearchChange: (s: string) => void;
+  sortKey: SortKey;
+  onSortChange: (next: SortKey) => void;
 }
 
 function basename(p: string): string {
@@ -53,7 +56,9 @@ export function Toolbar({
   onResetAllThumbs,
   thumbFailures,
   search,
-  onSearchChange
+  onSearchChange,
+  sortKey,
+  onSortChange
 }: Props) {
   const label = roots.length === 0
     ? 'No library selected'
@@ -104,6 +109,7 @@ export function Toolbar({
           </button>
         </div>
       ) : null}
+      <SortDropdown value={sortKey} onChange={onSortChange} disabled={roots.length === 0} />
       <input
         className="search"
         type="search"

@@ -228,6 +228,73 @@ input {
   border-color: var(--accent);
 }
 
+/* === Sort dropdown === */
+
+.sort-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.sort-button {
+  gap: 6px;
+}
+
+.sort-button .sort-label {
+  font-size: 12px;
+}
+
+.sort-button .sort-chevron {
+  font-size: 10px;
+  color: var(--text-faint);
+  transform: translateY(-1px);
+}
+
+.sort-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  min-width: 160px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+}
+
+.sort-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.sort-option:hover {
+  background: var(--bg-elev);
+}
+
+.sort-option.active {
+  color: var(--text);
+}
+
+.sort-option .sort-check {
+  width: 12px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 11px;
+}
+
 /* === Sidebar === */
 
 .sidebar {
@@ -407,6 +474,52 @@ input {
 
 .grid-host > div {
   outline: none;
+}
+
+/* === Grouped grid (sort by tag) === */
+
+.group-host {
+  height: 100%;
+  width: 100%;
+  overflow: auto;
+  padding: 16px;
+}
+
+.group-section {
+  margin-bottom: 24px;
+}
+
+.group-section:last-child {
+  margin-bottom: 0;
+}
+
+.group-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.group-header-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
+.group-header-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.group-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(var(--grid-cols, 1), minmax(240px, 1fr));
+  gap: 14px;
 }
 
 /* === Card === */
