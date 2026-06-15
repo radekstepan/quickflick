@@ -113,7 +113,7 @@ export function Toolbar({
       <input
         className="search"
         type="search"
-        placeholder="Search filename…"
+        placeholder="Search filename & folder…"
         value={search}
         onChange={(e) => onSearchChange(e.target.value)}
         disabled={roots.length === 0}

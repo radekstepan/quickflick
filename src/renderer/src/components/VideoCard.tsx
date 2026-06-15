@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useHoverCycle } from '../hooks/useHoverCycle';
 import { usePreloadedImages } from '../hooks/usePreloadedImages';
 import { api } from '../api';
+import { displayName } from '../utils/displayName';
 import type { VideoWithThumbs } from '@shared/types';
 
 interface Props {
@@ -25,22 +26,6 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-function pathBasename(p: string): string {
-  const parts = p.split('/').filter(Boolean);
-  return parts[parts.length - 1] ?? p;
-}
-
-function stemLength(filename: string): number {
-  const i = filename.lastIndexOf('.');
-  return i > 0 ? i : filename.length;
-}
-
-function displayName(filename: string, folder: string, roots: string[]): string {
-  if (stemLength(filename) >= 5) return filename;
-  const inRoot = roots.some((r) => folder === r);
-  return inRoot ? filename : `${pathBasename(folder)}/${filename}`;
 }
 
 export function VideoCard({ video, roots, onOpen }: Props) {

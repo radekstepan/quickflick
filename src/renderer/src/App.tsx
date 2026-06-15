@@ -7,6 +7,7 @@ import { EmptyState } from './components/EmptyState';
 import { FfmpegMissing } from './components/FfmpegMissing';
 import { useLibrary } from './hooks/useLibrary';
 import { videoMatchesTag, getMatchingTags } from './utils/tags';
+import { displayName } from './utils/displayName';
 import type { SortKey } from './components/SortDropdown';
 import type { VideoWithThumbs } from '@shared/types';
 
@@ -23,8 +24,11 @@ function normalizeForSearch(s: string): string {
   return s.toLowerCase().replace(/[-_.]+/g, ' ');
 }
 
-function byFilename(a: VideoWithThumbs, b: VideoWithThumbs): number {
-  return a.filename.localeCompare(b.filename);
+function byFilename(roots: string[]) {
+  return (a: VideoWithThumbs, b: VideoWithThumbs): number =>
+    displayName(a.filename, a.folder, roots).localeCompare(
+      displayName(b.filename, b.folder, roots)
+    );
 }
 
 const SORT_KEY_STORAGE = 'qf:sortKey';
@@ -68,7 +72,9 @@ export default function App() {
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      rows = rows.filter((v) => normalizeForSearch(v.filename).includes(q));
+      rows = rows.filter((v) =>
+        normalizeForSearch(displayName(v.filename, v.folder, lib.roots)).includes(q)
+      );
     }
     if (selectedTag) {
       rows = rows.filter((v) => videoMatchesTag(v, selectedTag, lib.roots));
@@ -77,13 +83,13 @@ export default function App() {
   }, [lib.videos, selectedRoot, selectedTag, search, lib.roots]);
 
   const sortedByName = useMemo(
-    () => [...filtered].sort(byFilename),
-    [filtered]
+    () => [...filtered].sort(byFilename(lib.roots)),
+    [filtered, lib.roots]
   );
 
   const groupsByTag = useMemo<VideoGroup[]>(() => {
     if (lib.tags.length === 0) {
-      return [{ tag: null, videos: [...filtered].sort(byFilename) }];
+      return [{ tag: null, videos: [...filtered].sort(byFilename(lib.roots)) }];
     }
     const buckets = new Map<string, VideoWithThumbs[]>();
     for (const t of lib.tags) buckets.set(t.name, []);
@@ -104,11 +110,11 @@ export default function App() {
     for (const name of tagNames) {
       const videos = buckets.get(name)!;
       if (videos.length === 0) continue;
-      videos.sort(byFilename);
+      videos.sort(byFilename(lib.roots));
       out.push({ tag: name, videos });
     }
     if (untagged.length > 0) {
-      untagged.sort(byFilename);
+      untagged.sort(byFilename(lib.roots));
       out.push({ tag: null, videos: untagged });
     }
     return out;
