@@ -16,8 +16,8 @@ interface Option {
 const OPTIONS: Option[] = [
   { value: 'name', label: 'Name' },
   { value: 'tags', label: 'Tags' },
-  { value: 'newest', label: 'Date added (newest)' },
-  { value: 'oldest', label: 'Date added (oldest)' },
+  { value: 'newest', label: 'Newest' },
+  { value: 'oldest', label: 'Oldest' },
   { value: 'mostViews', label: 'Most viewed' },
   { value: 'leastViews', label: 'Least viewed' }
 ];
