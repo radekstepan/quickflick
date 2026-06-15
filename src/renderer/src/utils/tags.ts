@@ -102,15 +102,16 @@ export function extractTags(filenames: string[]): Tag[] {
 
   candidates.sort((a, b) => b.tokens.length - a.tokens.length);
 
-  const covered = new Set<string>();
   const winners: Entry[] = [];
   for (const c of candidates) {
-    const key = c.tokens.join(' ');
-    if (covered.has(key)) continue;
+    const fullyCovered = winners.some((w) => {
+      for (const f of c.files) {
+        if (!w.files.has(f)) return false;
+      }
+      return true;
+    });
+    if (fullyCovered) continue;
     winners.push(c);
-    for (let i = 1; i < c.tokens.length; i++) {
-      covered.add(c.tokens.slice(0, i).join(' '));
-    }
   }
 
   return winners
