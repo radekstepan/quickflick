@@ -84,7 +84,7 @@ export function Sidebar({
           <div
             key={r}
             className={`sidebar-item ${isActive ? 'active' : ''}`}
-            onClick={() => onSelectRoot(isActive ? null : r)}
+            onClick={() => { if (!isActive) onSelectRoot(r); }}
             onContextMenu={(e) => {
               e.preventDefault();
               setMenu({ kind: 'root', x: e.clientX, y: e.clientY, path: r });

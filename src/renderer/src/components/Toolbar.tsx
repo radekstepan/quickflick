@@ -2,7 +2,7 @@ import type { ScanProgress, ThumbnailFailure } from '@shared/types';
 import { SortDropdown, type SortKey } from './SortDropdown';
 
 interface Props {
-  roots: string[];
+  hasRoots: boolean;
   isScanning: boolean;
   onAdd: () => void;
   onRescan: () => void;
@@ -13,11 +13,6 @@ interface Props {
   onSearchChange: (s: string) => void;
   sortKey: SortKey;
   onSortChange: (next: SortKey) => void;
-}
-
-function basename(p: string): string {
-  const parts = p.split('/').filter(Boolean);
-  return parts[parts.length - 1] ?? p;
 }
 
 function codecBreakdown(failures: ThumbnailFailure[]): string {
@@ -48,7 +43,7 @@ function formatFailure(f: ThumbnailFailure): string {
 }
 
 export function Toolbar({
-  roots,
+  hasRoots,
   isScanning,
   onAdd,
   onRescan,
@@ -60,12 +55,6 @@ export function Toolbar({
   sortKey,
   onSortChange
 }: Props) {
-  const label = roots.length === 0
-    ? 'No library selected'
-    : roots.length === 1
-    ? basename(roots[0])
-    : `${roots.length} folders`;
-
   const failureTooltip = thumbFailures.length
     ? `${thumbFailures.length} file(s) failed thumbnail generation. Click to retry.\n` +
       `Codecs: ${codecBreakdown(thumbFailures)}\n\n` +
@@ -74,50 +63,49 @@ export function Toolbar({
 
   return (
     <div className="toolbar">
-      <div className={`toolbar-path ${roots.length === 0 ? 'empty' : ''}`} title={roots.join('\n')}>
-        {label}
-      </div>
-      <button className="btn" onClick={onAdd} disabled={isScanning}>
-        Add folder
-      </button>
-      <button
-        className="btn primary"
-        onClick={onRescan}
-        disabled={roots.length === 0 || isScanning}
-        title="Rescan the library"
-      >
-        {isScanning ? <span className="spinner" /> : null}
-        {isScanning ? 'Scanning…' : 'Rescan'}
-      </button>
-      {thumbFailures.length > 0 ? (
-        <div className="thumb-failure-group">
-          <button
-            className="btn thumb-failures"
-            onClick={onRetryThumbs}
-            disabled={isScanning}
-            title={failureTooltip}
-          >
-            {thumbFailures.length} failed
-          </button>
-          <button
-            className="thumb-reset-link"
-            onClick={onResetAllThumbs}
-            disabled={isScanning}
-            title="Wipe all thumbnail files and regenerate from scratch"
-          >
-            Reset all
-          </button>
-        </div>
-      ) : null}
-      <SortDropdown value={sortKey} onChange={onSortChange} disabled={roots.length === 0} />
+      <SortDropdown value={sortKey} onChange={onSortChange} disabled={!hasRoots} />
       <input
         className="search"
         type="search"
         placeholder="Search filename & folder…"
         value={search}
         onChange={(e) => onSearchChange(e.target.value)}
-        disabled={roots.length === 0}
+        disabled={!hasRoots}
       />
+      <div className="toolbar-actions">
+        <button className="btn primary" onClick={onAdd} disabled={isScanning}>
+          Add folder
+        </button>
+        <button
+          className="btn"
+          onClick={onRescan}
+          disabled={!hasRoots || isScanning}
+          title="Rescan the library"
+        >
+          {isScanning ? <span className="spinner" /> : null}
+          {isScanning ? 'Scanning…' : 'Rescan'}
+        </button>
+        {thumbFailures.length > 0 ? (
+          <div className="thumb-failure-group">
+            <button
+              className="btn thumb-failures"
+              onClick={onRetryThumbs}
+              disabled={isScanning}
+              title={failureTooltip}
+            >
+              {thumbFailures.length} failed
+            </button>
+            <button
+              className="thumb-reset-link"
+              onClick={onResetAllThumbs}
+              disabled={isScanning}
+              title="Wipe all thumbnail files and regenerate from scratch"
+            >
+              Reset all
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

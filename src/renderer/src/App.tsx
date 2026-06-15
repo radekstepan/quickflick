@@ -63,6 +63,16 @@ export default function App() {
     saveSortKey(sortKey);
   }, [sortKey]);
 
+  useEffect(() => {
+    if (lib.roots.length === 0) {
+      if (selectedRoot !== null) setSelectedRoot(null);
+      return;
+    }
+    if (selectedRoot === null || !lib.roots.includes(selectedRoot)) {
+      setSelectedRoot(lib.roots[0]);
+    }
+  }, [lib.roots, selectedRoot]);
+
   const filtered = useMemo(() => {
     let rows = lib.videos;
     if (selectedRoot) {
@@ -133,7 +143,7 @@ export default function App() {
       <div className="titlebar">QuickFlick</div>
 
       <Toolbar
-        roots={lib.roots}
+        hasRoots={lib.roots.length > 0}
         isScanning={lib.isScanning}
         onAdd={lib.addFolder}
         onRescan={lib.rescan}
