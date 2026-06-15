@@ -6,6 +6,7 @@ import type { VideoWithThumbs } from '@shared/types';
 
 interface Props {
   video: VideoWithThumbs;
+  roots: string[];
   onOpen: (id: number) => void;
 }
 
@@ -26,7 +27,23 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-export function VideoCard({ video, onOpen }: Props) {
+function pathBasename(p: string): string {
+  const parts = p.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? p;
+}
+
+function stemLength(filename: string): number {
+  const i = filename.lastIndexOf('.');
+  return i > 0 ? i : filename.length;
+}
+
+function displayName(filename: string, folder: string, roots: string[]): string {
+  if (stemLength(filename) >= 5) return filename;
+  const inRoot = roots.some((r) => folder === r);
+  return inRoot ? filename : `${pathBasename(folder)}/${filename}`;
+}
+
+export function VideoCard({ video, roots, onOpen }: Props) {
   const urls = useMemo(
     () =>
       video.thumbnails
@@ -53,7 +70,7 @@ export function VideoCard({ video, onOpen }: Props) {
         e.preventDefault();
         void api.revealVideo(video.id);
       }}
-      title={video.filename + '\n\nClick: open in default app\nRight-click: show in Finder'}
+      title={displayName(video.filename, video.folder, roots) + '\n\nClick: open in default app\nRight-click: show in Finder'}
     >
       <div className="card-thumb" {...hover.bind}>
         {showImg && currentSrc ? (
@@ -81,7 +98,7 @@ export function VideoCard({ video, onOpen }: Props) {
         {video.duration ? <span className="badge">{formatDuration(video.duration)}</span> : null}
       </div>
       <div className="card-meta">
-        <div className="card-name">{video.filename}</div>
+        <div className="card-name">{displayName(video.filename, video.folder, roots)}</div>
         <div className="card-sub">
           {video.width && video.height ? <span>{video.width}×{video.height}</span> : null}
           {video.width && video.height ? <span className="dot" /> : null}

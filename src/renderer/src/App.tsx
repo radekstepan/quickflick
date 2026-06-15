@@ -68,7 +68,7 @@ export default function App() {
             onRescan={lib.rescan}
           />
         ) : (
-          <VideoGrid videos={filtered} onOpen={lib.openVideo} />
+          <VideoGrid videos={filtered} roots={lib.roots} onOpen={lib.openVideo} />
         )}
       </div>
 

@@ -6,6 +6,7 @@ import type { VideoWithThumbs } from '@shared/types';
 
 interface Props {
   videos: VideoWithThumbs[];
+  roots: string[];
   onOpen: (id: number) => Promise<void>;
 }
 
@@ -18,7 +19,7 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function VideoGrid({ videos, onOpen }: Props) {
+export function VideoGrid({ videos, roots, onOpen }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(1);
   const [visibleRange, setVisibleRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
@@ -52,7 +53,7 @@ export function VideoGrid({ videos, onOpen }: Props) {
         }}
         rangeChanged={({ startIndex, endIndex }) => setVisibleRange({ startIndex, endIndex })}
         computeItemKey={(_, v) => v.id}
-        itemContent={(_, v) => <VideoCard video={v} onOpen={onOpen} />}
+        itemContent={(_, v) => <VideoCard video={v} roots={roots} onOpen={onOpen} />}
       />
     </div>
   );
