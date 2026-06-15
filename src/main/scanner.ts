@@ -138,21 +138,28 @@ export async function scanLibrary(
       prev.duration == null;
 
     let thumbMissing = false;
-    if (prev?.thumb_status === 'ok') {
+    if (prev) {
       const thumbs = getThumbsForVideo(prev.id);
       if (thumbs.length < frameCount()) {
         thumbMissing = true;
       } else {
-        try {
-          await access(thumbs[0].file_path);
-        } catch {
-          thumbMissing = true;
+        for (const t of thumbs) {
+          try {
+            await access(t.file_path);
+          } catch {
+            thumbMissing = true;
+            break;
+          }
         }
       }
     }
     if (thumbMissing) missingThumbs++;
 
-    const needsThumb = fileChanged || prev?.thumb_status === 'pending' || thumbMissing;
+    const needsThumb =
+      fileChanged ||
+      prev?.thumb_status === 'pending' ||
+      prev?.thumb_status === 'failed' ||
+      thumbMissing;
 
     const id = upsertVideo({
       path,

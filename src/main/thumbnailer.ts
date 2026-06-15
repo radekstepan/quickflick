@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, rm, readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import ffmpeg from 'fluent-ffmpeg';
-import { getThumbsDir, insertThumbnails } from './db';
+import { getThumbsDir, insertThumbnails, deleteThumbnailsForVideo } from './db';
 import { codecFamily, type CodecFamily } from './probe';
 import type { Thumbnail } from '../shared/types';
 
@@ -269,6 +269,7 @@ export async function generateThumbnails(
   const outDir = thumbsDirFor(videoPath);
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
+  deleteThumbnailsForVideo(videoId);
 
   const interval = Math.max(durationSec / FRAME_COUNT, 0.05);
 
@@ -284,17 +285,12 @@ export async function generateThumbnails(
   const attempts: { label: string; error: string; files: number }[] = [];
   for (const c of candidates) {
     const result = await runFfmpeg(videoPath, c, outDir);
-    if (result.files.length > 0) {
-      const tag = result.files.length < FRAME_COUNT ? 'partial' : 'ok';
-      const msg =
+    if (result.files.length === FRAME_COUNT) {
+      console.log(
         `[thumbnail] ${basename(videoPath)}: ${result.files.length}/${FRAME_COUNT} frames via ${c.label} ` +
-        `[${tag}] elapsed=${result.elapsedMs}ms exit=${result.code ?? 'n/a'} ` +
-        `args=[${result.args.slice(1).join(' ')}]`;
-      if (tag === 'partial') {
-        console.warn(msg);
-      } else {
-        console.log(msg);
-      }
+        `[ok] elapsed=${result.elapsedMs}ms exit=${result.code ?? 'n/a'} ` +
+        `args=[${result.args.slice(1).join(' ')}]`
+      );
       const rows: Omit<Thumbnail, 'id'>[] = result.files.map((f, idx) => ({
         video_id: videoId,
         frame_index: idx,
@@ -304,6 +300,16 @@ export async function generateThumbnails(
       insertThumbnails(rows);
       onProgress?.(rows.length);
       return;
+    }
+    if (result.files.length > 0) {
+      const partialMsg = `partial: produced ${result.files.length}/${FRAME_COUNT} frames`;
+      console.warn(
+        `[thumbnail] ${basename(videoPath)}: candidate ${c.label} ${partialMsg} ` +
+        `elapsed=${result.elapsedMs}ms exit=${result.code ?? 'n/a'} ` +
+        `args=[${result.args.slice(1).join(' ')}]`
+      );
+      attempts.push({ label: c.label, error: partialMsg, files: result.files.length });
+      continue;
     }
     console.warn(
       `[thumbnail] ${basename(videoPath)}: candidate ${c.label} failed ` +

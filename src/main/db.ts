@@ -319,6 +319,13 @@ export function insertThumbnails(rows: Omit<Thumbnail, 'id'>[]): void {
   tx(rows);
 }
 
+export function deleteThumbnailsForVideo(videoId: number): number {
+  const result = getDb()
+    .prepare('DELETE FROM thumbnails WHERE video_id = ?')
+    .run(videoId);
+  return result.changes;
+}
+
 export function getThumbsForVideo(videoId: number): Thumbnail[] {
   return getDb()
     .prepare('SELECT * FROM thumbnails WHERE video_id = ? ORDER BY frame_index')
