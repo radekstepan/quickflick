@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { VideoWithThumbs } from '@shared/types';
+import type { Tag } from '../utils/tags';
 
 interface Props {
   roots: string[];
   videos: VideoWithThumbs[];
+  tags: Tag[];
   selectedRoot: string | null;
+  selectedTag: string | null;
   onSelectRoot: (root: string | null) => void;
+  onSelectTag: (tag: string | null) => void;
   onRemoveRoot: (path: string) => void;
+  onHideTag: (name: string) => void;
 }
 
-interface ContextMenu {
-  x: number;
-  y: number;
-  path: string;
-}
+type ContextMenu =
+  | { kind: 'root'; x: number; y: number; path: string }
+  | { kind: 'tag'; x: number; y: number; name: string };
 
 function basename(p: string): string {
   const parts = p.split('/').filter(Boolean);
@@ -27,7 +30,17 @@ function rootFor(video: VideoWithThumbs, roots: string[]): string | null {
   return null;
 }
 
-export function Sidebar({ roots, videos, selectedRoot, onSelectRoot, onRemoveRoot }: Props) {
+export function Sidebar({
+  roots,
+  videos,
+  tags,
+  selectedRoot,
+  selectedTag,
+  onSelectRoot,
+  onSelectTag,
+  onRemoveRoot,
+  onHideTag
+}: Props) {
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of roots) map.set(r, 0);
@@ -74,7 +87,7 @@ export function Sidebar({ roots, videos, selectedRoot, onSelectRoot, onRemoveRoo
             onClick={() => onSelectRoot(isActive ? null : r)}
             onContextMenu={(e) => {
               e.preventDefault();
-              setMenu({ x: e.clientX, y: e.clientY, path: r });
+              setMenu({ kind: 'root', x: e.clientX, y: e.clientY, path: r });
             }}
             title={r + '\n\nClick to filter · Right-click for options'}
           >
@@ -84,22 +97,60 @@ export function Sidebar({ roots, videos, selectedRoot, onSelectRoot, onRemoveRoo
         );
       })}
 
+      {tags.length > 0 ? (
+        <>
+          <div className="sidebar-section">Tags</div>
+          {tags.map((t) => {
+            const isActive = selectedTag === t.name;
+            return (
+              <div
+                key={t.name}
+                className={`sidebar-item ${isActive ? 'active' : ''}`}
+                onClick={() => onSelectTag(isActive ? null : t.name)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenu({ kind: 'tag', x: e.clientX, y: e.clientY, name: t.name });
+                }}
+                title={`Click to filter · Right-click to remove`}
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</span>
+                <span className="count">{t.count}</span>
+              </div>
+            );
+          })}
+        </>
+      ) : null}
+
       {menu ? (
         <div
           className="context-menu"
           style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            className="context-menu-item danger"
-            onClick={() => {
-              const p = menu.path;
-              setMenu(null);
-              void onRemoveRoot(p);
-            }}
-          >
-            Remove folder from library
-          </button>
+          {menu.kind === 'root' ? (
+            <button
+              className="context-menu-item danger"
+              onClick={() => {
+                const p = menu.path;
+                setMenu(null);
+                void onRemoveRoot(p);
+              }}
+            >
+              Remove folder from library
+            </button>
+          ) : (
+            <button
+              className="context-menu-item danger"
+              onClick={() => {
+                const n = menu.name;
+                if (selectedTag === n) onSelectTag(null);
+                setMenu(null);
+                onHideTag(n);
+              }}
+            >
+              Remove tag
+            </button>
+          )}
         </div>
       ) : null}
     </div>

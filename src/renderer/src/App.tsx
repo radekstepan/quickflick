@@ -5,10 +5,25 @@ import { VideoGrid } from './components/VideoGrid';
 import { EmptyState } from './components/EmptyState';
 import { FfmpegMissing } from './components/FfmpegMissing';
 import { useLibrary } from './hooks/useLibrary';
+import { matchesTag } from './utils/tags';
+
+function formatSearchInput(raw: string): string {
+  return raw
+    .replace(/[-_.]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => (/^\d+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+function normalizeForSearch(s: string): string {
+  return s.toLowerCase().replace(/[-_.]+/g, ' ');
+}
 
 export default function App() {
   const lib = useLibrary();
   const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [ffmpegDismissed, setFfmpegDismissed] = useState(false);
 
@@ -21,10 +36,13 @@ export default function App() {
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      rows = rows.filter((v) => v.filename.toLowerCase().includes(q));
+      rows = rows.filter((v) => normalizeForSearch(v.filename).includes(q));
+    }
+    if (selectedTag) {
+      rows = rows.filter((v) => matchesTag(v.filename, selectedTag));
     }
     return rows;
-  }, [lib.videos, selectedRoot, search]);
+  }, [lib.videos, selectedRoot, selectedTag, search]);
 
   if (lib.loading) {
     return (
@@ -47,15 +65,19 @@ export default function App() {
         onResetAllThumbs={lib.resetAllThumbs}
         thumbFailures={lib.thumbFailures}
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={(s) => setSearch(formatSearchInput(s))}
       />
 
       <Sidebar
         roots={lib.roots}
         videos={lib.videos}
+        tags={lib.tags}
         selectedRoot={selectedRoot}
+        selectedTag={selectedTag}
         onSelectRoot={setSelectedRoot}
+        onSelectTag={setSelectedTag}
         onRemoveRoot={lib.removeFolder}
+        onHideTag={lib.hideTag}
       />
 
       <div className="main">

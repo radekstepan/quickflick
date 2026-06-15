@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { api } from '../api';
 import type {
   FfmpegStatus,
@@ -7,10 +7,13 @@ import type {
   ThumbnailFailure,
   VideoWithThumbs
 } from '@shared/types';
+import { extractTags, type Tag } from '../utils/tags';
 
 export interface LibraryState {
   roots: string[];
   videos: VideoWithThumbs[];
+  tags: Tag[];
+  hiddenTags: ReadonlySet<string>;
   ffmpeg: FfmpegStatus | null;
   loading: boolean;
   isScanning: boolean;
@@ -23,6 +26,9 @@ export interface LibraryState {
   resetAllThumbs: () => Promise<void>;
   reload: () => Promise<void>;
   openVideo: (id: number) => Promise<void>;
+  hideTag: (name: string) => void;
+  unhideTag: (name: string) => void;
+  unhideAllTags: () => void;
 }
 
 function isSubPathOrEqual(child: string, parent: string): boolean {
@@ -30,14 +36,65 @@ function isSubPathOrEqual(child: string, parent: string): boolean {
   return child.startsWith(parent + '/');
 }
 
+const HIDDEN_TAGS_KEY = 'qf:hiddenTags';
+
+function loadHiddenTags(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_TAGS_KEY);
+    if (!raw) return new Set();
+    const arr: unknown = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((x): x is string => typeof x === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenTags(set: Set<string>): void {
+  try {
+    localStorage.setItem(HIDDEN_TAGS_KEY, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore quota / disabled storage
+  }
+}
+
 export function useLibrary(): LibraryState {
   const [roots, setRoots] = useState<string[]>([]);
   const [videos, setVideos] = useState<VideoWithThumbs[]>([]);
+  const [hiddenTags, setHiddenTags] = useState<Set<string>>(() => loadHiddenTags());
   const [ffmpeg, setFfmpeg] = useState<FfmpegStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [thumbFailures, setThumbFailures] = useState<ThumbnailFailure[]>([]);
+
+  const hideTag = useCallback((name: string) => {
+    setHiddenTags((prev) => {
+      if (prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.add(name);
+      saveHiddenTags(next);
+      return next;
+    });
+  }, []);
+
+  const unhideTag = useCallback((name: string) => {
+    setHiddenTags((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      saveHiddenTags(next);
+      return next;
+    });
+  }, []);
+
+  const unhideAllTags = useCallback(() => {
+    setHiddenTags(() => {
+      const next = new Set<string>();
+      saveHiddenTags(next);
+      return next;
+    });
+  }, []);
 
   const reload = useCallback(async () => {
     const rows = await api.listVideos();
@@ -168,6 +225,11 @@ export function useLibrary(): LibraryState {
     return unsub;
   }, []);
 
+  const tags = useMemo(
+    () => extractTags(videos.map((v) => v.filename)).filter((t) => !hiddenTags.has(t.name)),
+    [videos, hiddenTags]
+  );
+
   useEffect(() => {
     const unsubDiscovered = api.onVideosDiscovered((rows) => {
       setVideos((prev) => {
@@ -204,6 +266,8 @@ export function useLibrary(): LibraryState {
   return {
     roots,
     videos,
+    tags,
+    hiddenTags,
     ffmpeg,
     loading,
     isScanning,
@@ -215,6 +279,9 @@ export function useLibrary(): LibraryState {
     retryFailedThumbs,
     resetAllThumbs,
     reload,
-    openVideo
+    openVideo,
+    hideTag,
+    unhideTag,
+    unhideAllTags
   };
 }

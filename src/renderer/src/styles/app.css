@@ -247,6 +247,12 @@ input {
   font-weight: 600;
 }
 
+.sidebar-section + .sidebar-section {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 10px;
+}
+
 .sidebar-item {
   display: flex;
   align-items: center;
