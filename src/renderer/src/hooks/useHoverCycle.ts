@@ -17,7 +17,7 @@ export interface HoverCycleApi {
 
 /**
  * Cycles through N frames at a fixed interval while hovered.
- * - Resets to frame 0 on mouseleave.
+ * - Resets to the default (middle) frame on mouseleave.
  * - If frameCount <= 1, never cycles and stays at 0.
  */
 export function useHoverCycle({ frameCount, intervalMs = 700, enabled = true }: HoverCycleOptions): HoverCycleApi {

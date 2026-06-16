@@ -6,10 +6,13 @@ interface Props {
   roots: string[];
   videos: VideoWithThumbs[];
   tags: Tag[];
+  untaggedCount: number;
   selectedRoot: string | null;
   selectedTag: string | null;
+  filterUntagged: boolean;
   onSelectRoot: (root: string | null) => void;
   onSelectTag: (tag: string | null) => void;
+  onSelectUntagged: () => void;
   onRemoveRoot: (path: string) => void;
   onHideTag: (name: string) => void;
 }
@@ -34,10 +37,13 @@ export function Sidebar({
   roots,
   videos,
   tags,
+  untaggedCount,
   selectedRoot,
   selectedTag,
+  filterUntagged,
   onSelectRoot,
   onSelectTag,
+  onSelectUntagged,
   onRemoveRoot,
   onHideTag
 }: Props) {
@@ -97,7 +103,7 @@ export function Sidebar({
         );
       })}
 
-      {tags.length > 0 ? (
+      {tags.length > 0 || untaggedCount > 0 ? (
         <>
           <div className="sidebar-section">Tags</div>
           {tags.map((t) => {
@@ -118,6 +124,17 @@ export function Sidebar({
               </div>
             );
           })}
+          {untaggedCount > 0 ? (
+            <div
+              key="__untagged__"
+              className={`sidebar-item untagged ${filterUntagged ? 'active' : ''}`}
+              onClick={onSelectUntagged}
+              title="Click to filter to untagged videos only"
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Untagged</span>
+              <span className="count">{untaggedCount}</span>
+            </div>
+          ) : null}
         </>
       ) : null}
 

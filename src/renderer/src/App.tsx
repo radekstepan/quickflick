@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toolbar, ScanProgressOverlay } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
 import { VideoGrid } from './components/VideoGrid';
@@ -103,9 +103,34 @@ export default function App() {
   const lib = useLibrary();
   const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [filterUntagged, setFilterUntagged] = useState(false);
   const [search, setSearch] = useState('');
   const [ffmpegDismissed, setFfmpegDismissed] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>(loadSortKey);
+
+  const handleSelectTag = useCallback((name: string | null) => {
+    setSelectedTag(name);
+    setFilterUntagged(false);
+  }, []);
+
+  const handleSelectUntagged = useCallback(() => {
+    setFilterUntagged((prev) => !prev);
+    setSelectedTag(null);
+  }, []);
+
+  const untaggedCount = useMemo(() => {
+    if (lib.tags.length === 0) return lib.videos.length;
+    const seen = new Set<number>();
+    let n = 0;
+    for (const v of lib.videos) {
+      if (seen.has(v.id)) continue;
+      if (getMatchingTags(v, lib.tags, lib.roots).length === 0) {
+        seen.add(v.id);
+        n++;
+      }
+    }
+    return n;
+  }, [lib.videos, lib.tags, lib.roots]);
 
   // Frozen display order: captured once when lib.videos first becomes
   // non-empty, and re-captured when the user picks a new sort key. Click
@@ -193,9 +218,10 @@ export default function App() {
         if (!name.includes(q)) return false;
       }
       if (selectedTag && !videoMatchesTag(v, selectedTag, lib.roots)) return false;
+      if (filterUntagged && getMatchingTags(v, lib.tags, lib.roots).length > 0) return false;
       return true;
     });
-  }, [frozenOrder, videosById, selectedRoot, selectedTag, search, lib.roots]);
+  }, [frozenOrder, videosById, selectedRoot, selectedTag, filterUntagged, search, lib.roots, lib.tags]);
 
   const displayVideos = useMemo(
     () =>
@@ -242,10 +268,13 @@ export default function App() {
         roots={lib.roots}
         videos={lib.videos}
         tags={lib.tags}
+        untaggedCount={untaggedCount}
         selectedRoot={selectedRoot}
         selectedTag={selectedTag}
+        filterUntagged={filterUntagged}
         onSelectRoot={setSelectedRoot}
-        onSelectTag={setSelectedTag}
+        onSelectTag={handleSelectTag}
+        onSelectUntagged={handleSelectUntagged}
         onRemoveRoot={lib.removeFolder}
         onHideTag={lib.hideTag}
       />

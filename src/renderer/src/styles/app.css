@@ -336,6 +336,15 @@ input {
   color: var(--text-faint);
 }
 
+.sidebar-item.untagged {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.sidebar-item.untagged.active {
+  opacity: 1;
+}
+
 /* === Context menu === */
 
 .context-menu {
@@ -538,7 +547,7 @@ input {
   overflow: hidden;
 }
 
-.card-thumb img {
+.card-thumb .thumb {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -546,11 +555,14 @@ input {
   object-fit: cover;
   display: block;
   opacity: 0;
-  transition: opacity 0.18s ease;
+  transition: opacity 0.2s ease-out;
+  z-index: 1;
+  will-change: opacity;
 }
 
-.card-thumb img.loaded {
+.card-thumb .thumb.current {
   opacity: 1;
+  z-index: 2;
 }
 
 .card-thumb .badge {
