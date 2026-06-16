@@ -292,15 +292,21 @@ export default function App() {
           <GroupedVideoGrid
             groups={groupsByTag}
             roots={lib.roots}
+            tags={lib.tags}
             onOpen={lib.openVideo}
             getViewCount={lib.getViewCount}
+            onAddTag={lib.setVideoTag}
+            onRemoveTag={lib.removeVideoTag}
           />
         ) : (
           <VideoGrid
             videos={displayVideos}
             roots={lib.roots}
+            tags={lib.tags}
             onOpen={lib.openVideo}
             getViewCount={lib.getViewCount}
+            onAddTag={lib.setVideoTag}
+            onRemoveTag={lib.removeVideoTag}
           />
         )}
       </div>

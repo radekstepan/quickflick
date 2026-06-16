@@ -170,7 +170,9 @@ export async function scanLibrary(
       duration: prev?.duration ?? null,
       width: prev?.width ?? null,
       height: prev?.height ?? null,
-      codec: prev?.codec ?? null
+      codec: prev?.codec ?? null,
+      tags: prev?.tags ?? [],
+      excludedTags: prev?.excludedTags ?? []
     });
 
     if (!prev) added++;
@@ -214,7 +216,9 @@ export async function scanLibrary(
               duration: probe.duration,
               width: probe.width,
               height: probe.height,
-              codec: probe.codecName
+              codec: probe.codecName,
+              tags: v.tags ?? [],
+              excludedTags: v.excludedTags ?? []
             });
           }
           const safeDuration = probe.duration && probe.duration > 0 ? probe.duration : 60;

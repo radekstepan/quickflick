@@ -61,6 +61,22 @@ export function initDb(): void {
       added_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS video_tags (
+      video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      tag_name   TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (video_id, tag_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_video_tags_name ON video_tags(tag_name);
+
+    CREATE TABLE IF NOT EXISTS video_excluded_tags (
+      video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      tag_name   TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (video_id, tag_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_video_excluded_tags_name ON video_excluded_tags(tag_name);
+
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -304,7 +320,38 @@ export function listVideos(opts: { folder?: string; search?: string; sort?: Sort
     byVideo.set(t.video_id, arr);
   }
 
-  return rows.map((v) => ({ ...v, thumbnails: byVideo.get(v.id) ?? [] }));
+  const tagRows = getDb()
+    .prepare(
+      `SELECT video_id, tag_name FROM video_tags WHERE video_id IN (${placeholders}) ORDER BY tag_name`
+    )
+    .all(...ids) as { video_id: number; tag_name: string }[];
+
+  const tagsByVideo = new Map<number, string[]>();
+  for (const t of tagRows) {
+    const arr = tagsByVideo.get(t.video_id) ?? [];
+    arr.push(t.tag_name);
+    tagsByVideo.set(t.video_id, arr);
+  }
+
+  const excludedRows = getDb()
+    .prepare(
+      `SELECT video_id, tag_name FROM video_excluded_tags WHERE video_id IN (${placeholders}) ORDER BY tag_name`
+    )
+    .all(...ids) as { video_id: number; tag_name: string }[];
+
+  const excludedByVideo = new Map<number, string[]>();
+  for (const t of excludedRows) {
+    const arr = excludedByVideo.get(t.video_id) ?? [];
+    arr.push(t.tag_name);
+    excludedByVideo.set(t.video_id, arr);
+  }
+
+  return rows.map((v) => ({
+    ...v,
+    thumbnails: byVideo.get(v.id) ?? [],
+    tags: tagsByVideo.get(v.id) ?? [],
+    excludedTags: excludedByVideo.get(v.id) ?? []
+  }));
 }
 
 export function removeStaleVideos(validPaths: Set<string>): number {
@@ -345,4 +392,65 @@ export function getThumbsForVideo(videoId: number): Thumbnail[] {
   return getDb()
     .prepare('SELECT * FROM thumbnails WHERE video_id = ? ORDER BY frame_index')
     .all(videoId) as Thumbnail[];
+}
+
+export function setVideoTag(videoId: number, tagName: string): void {
+  const db = getDb();
+  const tx = db.transaction((id: number, name: string) => {
+    db.prepare(
+      `INSERT INTO video_tags (video_id, tag_name, created_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(video_id, tag_name) DO NOTHING`
+    ).run(id, name, Date.now());
+    db.prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ?').run(id, name);
+  });
+  tx(videoId, tagName);
+}
+
+export function removeVideoTag(videoId: number, tagName: string): void {
+  const db = getDb();
+  const exists = db
+    .prepare('SELECT 1 AS x FROM video_tags WHERE video_id = ? AND tag_name = ?')
+    .get(videoId, tagName) as { x: number } | undefined;
+  if (exists) {
+    db.prepare('DELETE FROM video_tags WHERE video_id = ? AND tag_name = ?').run(videoId, tagName);
+  } else {
+    db.prepare(
+      `INSERT INTO video_excluded_tags (video_id, tag_name, created_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(video_id, tag_name) DO NOTHING`
+    ).run(videoId, tagName, Date.now());
+  }
+}
+
+export function setVideoExclusion(videoId: number, tagName: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO video_excluded_tags (video_id, tag_name, created_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(video_id, tag_name) DO NOTHING`
+    )
+    .run(videoId, tagName, Date.now());
+}
+
+export function removeVideoExclusion(videoId: number, tagName: string): void {
+  getDb()
+    .prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ?')
+    .run(videoId, tagName);
+}
+
+export function getTagsForVideo(videoId: number): string[] {
+  return (
+    getDb()
+      .prepare('SELECT tag_name FROM video_tags WHERE video_id = ? ORDER BY tag_name')
+      .all(videoId) as { tag_name: string }[]
+  ).map((r) => r.tag_name);
+}
+
+export function getAllUserTagNames(): string[] {
+  return (
+    getDb()
+      .prepare('SELECT DISTINCT tag_name FROM video_tags ORDER BY tag_name')
+      .all() as { tag_name: string }[]
+  ).map((r) => r.tag_name);
 }

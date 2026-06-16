@@ -43,7 +43,11 @@ const api: Api = {
     return () => ipcRenderer.removeListener('library:videoThumbed', listener);
   },
   getFfmpegStatus: () => ipcRenderer.invoke('ffmpeg:status') as Promise<FfmpegStatus>,
-  showItemInFolder: (_path: string) => Promise.resolve()
+  showItemInFolder: (_path: string) => Promise.resolve(),
+  setVideoTag: (id, name) => ipcRenderer.invoke('video:setTag', id, name) as Promise<void>,
+  removeVideoTag: (id, name) =>
+    ipcRenderer.invoke('video:removeTag', id, name) as Promise<void>,
+  getAllUserTagNames: () => ipcRenderer.invoke('tags:list') as Promise<string[]>
 };
 
 contextBridge.exposeInMainWorld('api', api);

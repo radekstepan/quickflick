@@ -4,6 +4,7 @@ import { basename } from 'node:path';
 import {
   addRoot,
   countVideosByRoot,
+  getAllUserTagNames,
   getThumbsDir,
   getVideoById,
   incrementViewCount,
@@ -14,7 +15,9 @@ import {
   removeThumbsForPaths,
   removeVideosByRoot,
   resetAllThumbs,
-  resetFailedThumbs
+  resetFailedThumbs,
+  removeVideoTag,
+  setVideoTag
 } from './db';
 import { checkFfmpeg, checkFfprobe } from './ffmpeg';
 import { scanLibrary } from './scanner';
@@ -143,6 +146,18 @@ export function registerIpc(): void {
     const v = getVideoById(id);
     if (!v) return;
     shell.showItemInFolder(v.path);
+  });
+
+  ipcMain.handle('video:setTag', async (_e, id: number, name: string) => {
+    setVideoTag(id, name);
+  });
+
+  ipcMain.handle('video:removeTag', async (_e, id: number, name: string) => {
+    removeVideoTag(id, name);
+  });
+
+  ipcMain.handle('tags:list', async () => {
+    return getAllUserTagNames();
   });
 
   ipcMain.handle('ffmpeg:status', async () => {

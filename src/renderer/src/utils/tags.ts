@@ -76,6 +76,15 @@ function titleCase(s: string): string {
     .join(' ');
 }
 
+export function normaliseTagName(s: string): string {
+  return s
+    .trim()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .map((w) => (w.length === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
 export function extractTags(filenames: string[]): Tag[] {
   type Entry = { tokens: string[]; files: Set<string> };
   const byKey = new Map<string, Entry>();
@@ -140,10 +149,15 @@ export function findRoot(folder: string, roots: string[]): string | null {
 }
 
 export function videoMatchesTag(
-  video: { filename: string; folder: string },
+  video: { filename: string; folder: string; tags?: ReadonlyArray<string>; excludedTags?: ReadonlyArray<string> },
   tagName: string,
   roots: string[]
 ): boolean {
+  const lc = tagName.toLowerCase();
+  if (video.excludedTags && video.excludedTags.some((t) => t.toLowerCase() === lc)) {
+    return false;
+  }
+  if (video.tags && video.tags.some((t) => t.toLowerCase() === lc)) return true;
   if (matchesTag(video.filename, tagName)) return true;
   const root = findRoot(video.folder, roots);
   if (!root) return false;
@@ -153,7 +167,7 @@ export function videoMatchesTag(
 }
 
 export function getMatchingTags(
-  video: { filename: string; folder: string },
+  video: { filename: string; folder: string; tags?: ReadonlyArray<string>; excludedTags?: ReadonlyArray<string> },
   tags: ReadonlyArray<Tag>,
   roots: string[]
 ): string[] {

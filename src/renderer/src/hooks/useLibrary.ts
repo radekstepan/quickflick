@@ -30,6 +30,8 @@ export interface LibraryState {
   unhideTag: (name: string) => void;
   unhideAllTags: () => void;
   getViewCount: (id: number, fallback: number) => number;
+  setVideoTag: (videoId: number, tagName: string) => Promise<void>;
+  removeVideoTag: (videoId: number, tagName: string) => Promise<void>;
 }
 
 function isSubPathOrEqual(child: string, parent: string): boolean {
@@ -71,6 +73,7 @@ export function useLibrary(): LibraryState {
   const [viewCountOverrides, setViewCountOverrides] = useState<Map<number, number>>(
     () => new Map()
   );
+  const [userTagNames, setUserTagNames] = useState<string[]>([]);
 
   const hideTag = useCallback((name: string) => {
     setHiddenTags((prev) => {
@@ -101,8 +104,58 @@ export function useLibrary(): LibraryState {
   }, []);
 
   const reload = useCallback(async () => {
-    const rows = await api.listVideos();
+    const [rows, userTags] = await Promise.all([api.listVideos(), api.getAllUserTagNames()]);
     setVideos(rows);
+    setUserTagNames(userTags);
+  }, []);
+
+  const setVideoTag = useCallback(async (videoId: number, tagName: string) => {
+    const lc = tagName.toLowerCase();
+    setVideos((prev) => {
+      const idx = prev.findIndex((v) => v.id === videoId);
+      if (idx === -1) return prev;
+      const cur = prev[idx];
+      const hasUser = cur.tags.some((t) => t.toLowerCase() === lc);
+      const hasExcluded = cur.excludedTags.some((t) => t.toLowerCase() === lc);
+      if (hasUser && !hasExcluded) return prev;
+      const next = prev.slice();
+      next[idx] = {
+        ...cur,
+        tags: hasUser ? cur.tags : [...cur.tags, tagName].sort((a, b) => a.localeCompare(b)),
+        excludedTags: cur.excludedTags.filter((t) => t.toLowerCase() !== lc)
+      };
+      return next;
+    });
+    setUserTagNames((prev) =>
+      prev.some((n) => n.toLowerCase() === lc) ? prev : [...prev, tagName].sort()
+    );
+    await api.setVideoTag(videoId, tagName);
+  }, []);
+
+  const removeVideoTag = useCallback(async (videoId: number, tagName: string) => {
+    const lc = tagName.toLowerCase();
+    setVideos((prev) => {
+      const idx = prev.findIndex((v) => v.id === videoId);
+      if (idx === -1) return prev;
+      const cur = prev[idx];
+      const next = prev.slice();
+      const hadUser = cur.tags.some((t) => t.toLowerCase() === lc);
+      if (hadUser) {
+        next[idx] = {
+          ...cur,
+          tags: cur.tags.filter((t) => t.toLowerCase() !== lc)
+        };
+      } else {
+        next[idx] = {
+          ...cur,
+          excludedTags: cur.excludedTags.some((t) => t.toLowerCase() === lc)
+            ? cur.excludedTags
+            : [...cur.excludedTags, tagName].sort((a, b) => a.localeCompare(b))
+        };
+      }
+      return next;
+    });
+    await api.removeVideoTag(videoId, tagName);
   }, []);
 
   const addFolder = useCallback(async () => {
@@ -224,10 +277,15 @@ export function useLibrary(): LibraryState {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [rs, ffm] = await Promise.all([api.getRoots(), api.getFfmpegStatus()]);
+      const [rs, ffm, userTags] = await Promise.all([
+        api.getRoots(),
+        api.getFfmpegStatus(),
+        api.getAllUserTagNames()
+      ]);
       if (!mounted) return;
       setRoots(rs);
       setFfmpeg(ffm);
+      setUserTagNames(userTags);
       setLoading(false);
       if (rs.length > 0) {
         const rows = await api.listVideos();
@@ -244,14 +302,34 @@ export function useLibrary(): LibraryState {
     return unsub;
   }, []);
 
-  const tags = useMemo(
-    () =>
-      extractTagsWithFolders(
-        videos.map((v) => ({ filename: v.filename, folder: v.folder })),
-        roots
-      ).filter((t) => !hiddenTags.has(t.name)),
-    [videos, roots, hiddenTags]
-  );
+  const tags = useMemo(() => {
+    const auto = extractTagsWithFolders(
+      videos.map((v) => ({ filename: v.filename, folder: v.folder })),
+      roots
+    );
+    const byName = new Map<string, Tag>();
+    for (const t of auto) byName.set(t.name, t);
+    for (const name of userTagNames) {
+      const lc = name.toLowerCase();
+      const existing = byName.get(name);
+      if (existing) {
+        const userCount = videos.filter((v) =>
+          v.tags.some((t) => t.toLowerCase() === lc)
+        ).length;
+        if (userCount > existing.count) {
+          byName.set(name, { name, count: userCount });
+        }
+      } else {
+        const userCount = videos.filter((v) =>
+          v.tags.some((t) => t.toLowerCase() === lc)
+        ).length;
+        byName.set(name, { name, count: userCount });
+      }
+    }
+    return Array.from(byName.values())
+      .filter((t) => !hiddenTags.has(t.name))
+      .sort((a, b) => a.name.localeCompare(b.name) || b.count - a.count);
+  }, [videos, roots, hiddenTags, userTagNames]);
 
   useEffect(() => {
     const unsubDiscovered = api.onVideosDiscovered((rows) => {
@@ -306,6 +384,8 @@ export function useLibrary(): LibraryState {
     hideTag,
     unhideTag,
     unhideAllTags,
-    getViewCount
+    getViewCount,
+    setVideoTag,
+    removeVideoTag
   };
 }

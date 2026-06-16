@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useHoverCycle } from '../hooks/useHoverCycle';
 import { usePreloadedImages } from '../hooks/usePreloadedImages';
 import { api } from '../api';
 import { displayName } from '../utils/displayName';
+import { getMatchingTags, type Tag } from '../utils/tags';
+import { TagPickerModal } from './TagPickerModal';
 import type { VideoWithThumbs } from '@shared/types';
 
 interface Props {
   video: VideoWithThumbs;
   roots: string[];
+  tags: Tag[];
   onOpen: (id: number) => void;
+  onAddTag: (id: number, name: string) => void;
+  onRemoveTag: (id: number, name: string) => void;
 }
 
 function formatDuration(seconds: number | null): string {
@@ -33,7 +39,7 @@ function formatViews(n: number): string {
   return `${n} views`;
 }
 
-export function VideoCard({ video, roots, onOpen }: Props) {
+export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }: Props) {
   const urls = useMemo(
     () =>
       video.thumbnails
@@ -96,17 +102,54 @@ export function VideoCard({ video, roots, onOpen }: Props) {
 
   const showBadge = hover.isHovering && urls.length > 1;
 
+  const matchingTags = useMemo(
+    () => getMatchingTags(video, tags, roots),
+    [video, tags, roots]
+  );
+  const userTagSet = useMemo(
+    () => new Set(video.tags.map((t) => t.toLowerCase())),
+    [video.tags]
+  );
+  const excludedTagSet = useMemo(
+    () => new Set(video.excludedTags.map((t) => t.toLowerCase())),
+    [video.excludedTags]
+  );
+
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('.context-menu')) return;
+      setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+
   return (
     <div
       className="card"
       onClick={() => onOpen(video.id)}
       onContextMenu={(e) => {
         e.preventDefault();
-        void api.revealVideo(video.id);
+        setMenu({ x: e.clientX, y: e.clientY });
       }}
       onMouseEnter={hover.bind.onMouseEnter}
       onMouseLeave={hover.bind.onMouseLeave}
-      title={displayName(video.filename, video.folder, roots) + '\n\nClick: open in default app\nRight-click: show in Finder'}
+      title={
+        displayName(video.filename, video.folder, roots) +
+        '\n\nClick: open in default app\nRight-click: more options'
+      }
     >
       <div className="card-thumb">
         {leavingFrame !== null ? renderImg(leavingFrame, 'leaving') : null}
@@ -129,6 +172,51 @@ export function VideoCard({ video, roots, onOpen }: Props) {
           <span>{formatViews(video.view_count)}</span>
         </div>
       </div>
+      {menu
+        ? createPortal(
+            <div
+              className="context-menu"
+              style={{ left: menu.x, top: menu.y }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  void api.revealVideo(video.id);
+                }}
+              >
+                Reveal in Finder
+              </button>
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  setPickerOpen(true);
+                }}
+              >
+                Edit tags
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
+      {pickerOpen
+        ? createPortal(
+            <TagPickerModal
+              matchingTags={matchingTags}
+              allTagNames={tags.map((t) => t.name)}
+              userTagSet={userTagSet}
+              excludedTagSet={excludedTagSet}
+              onAdd={(name) => onAddTag(video.id, name)}
+              onRemove={(name) => onRemoveTag(video.id, name)}
+              onClose={() => setPickerOpen(false)}
+            />,
+            document.body
+          )
+        : null}
     </div>
   );
 }

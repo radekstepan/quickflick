@@ -2,13 +2,17 @@ import { forwardRef, useEffect, useRef, useState } from 'react';
 import { VirtuosoGrid } from 'react-virtuoso';
 import { VideoCard } from './VideoCard';
 import { useViewportPrefetch } from '../hooks/useViewportPrefetch';
+import type { Tag } from '../utils/tags';
 import type { VideoWithThumbs } from '@shared/types';
 
 interface Props {
   videos: VideoWithThumbs[];
   roots: string[];
+  tags: Tag[];
   onOpen: (id: number) => Promise<number>;
   getViewCount: (id: number, fallback: number) => number;
+  onAddTag: (id: number, name: string) => void;
+  onRemoveTag: (id: number, name: string) => void;
 }
 
 const PADDING_X = 32;
@@ -20,7 +24,7 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function VideoGrid({ videos, roots, onOpen, getViewCount }: Props) {
+export function VideoGrid({ videos, roots, tags, onOpen, getViewCount, onAddTag, onRemoveTag }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(1);
   const [visibleRange, setVisibleRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
@@ -58,7 +62,10 @@ export function VideoGrid({ videos, roots, onOpen, getViewCount }: Props) {
           <VideoCard
             video={{ ...v, view_count: getViewCount(v.id, v.view_count) }}
             roots={roots}
+            tags={tags}
             onOpen={onOpen}
+            onAddTag={onAddTag}
+            onRemoveTag={onRemoveTag}
           />
         )}
       />

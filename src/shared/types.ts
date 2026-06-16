@@ -14,6 +14,8 @@ export interface Video {
   codec: string | null;
   thumb_status: ThumbStatus;
   view_count: number;
+  tags: string[];
+  excludedTags: string[];
 }
 
 export interface Thumbnail {
@@ -102,4 +104,7 @@ export interface Api {
   onVideoThumbed: (cb: (row: VideoWithThumbs) => void) => () => void;
   getFfmpegStatus: () => Promise<FfmpegStatus>;
   showItemInFolder: (path: string) => Promise<void>;
+  setVideoTag: (videoId: number, tagName: string) => Promise<void>;
+  removeVideoTag: (videoId: number, tagName: string) => Promise<void>;
+  getAllUserTagNames: () => Promise<string[]>;
 }
