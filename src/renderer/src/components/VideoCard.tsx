@@ -165,7 +165,11 @@ export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }:
       <div className="card-meta">
         <div className="card-name">{displayName(video.filename, video.folder, roots)}</div>
         <div className="card-sub">
-          {video.width && video.height ? <span>{video.width}×{video.height}</span> : null}
+          {video.width && video.height ? (
+            <span className={video.width >= 3840 || video.height >= 2160 ? 'res-4k' : undefined}>
+              {video.width}×{video.height}
+            </span>
+          ) : null}
           {video.width && video.height ? <span className="dot" /> : null}
           <span>{formatSize(video.size)}</span>
           <span className="dot" />

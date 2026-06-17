@@ -614,6 +614,10 @@ input {
   border-radius: 50%;
 }
 
+.card-sub .res-4k {
+  color: var(--accent);
+}
+
 /* === Modal === */
 
 .modal-backdrop {
