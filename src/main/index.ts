@@ -97,7 +97,7 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#0e0e10',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 18 },
+    trafficLightPosition: { x: 16, y: 15 },
     title: 'QuickFlick',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
