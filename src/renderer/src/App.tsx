@@ -137,6 +137,13 @@ export default function App() {
   // events, rescans, and filter changes do NOT update this order during
   // the current session. The new order takes effect on next app launch.
   const [frozenOrder, setFrozenOrder] = useState<number[] | null>(null);
+  // Snapshot of view_count values at the time `frozenOrder` was captured.
+  // Used to display counts on view-sorted cards so they stay frozen
+  // alongside the order. For non-view sorts, cards show the live count
+  // from lib.videos (which is patched by openVideo).
+  const [frozenViewCounts, setFrozenViewCounts] = useState<Map<number, number>>(
+    () => new Map()
+  );
   const capturedSortKeyRef = useRef<SortKey | null>(null);
   const initialCapturedRef = useRef(false);
 
@@ -160,6 +167,7 @@ export default function App() {
   useEffect(() => {
     if (lib.videos.length === 0) {
       if (frozenOrder !== null) setFrozenOrder(null);
+      if (frozenViewCounts.size > 0) setFrozenViewCounts(new Map());
       capturedSortKeyRef.current = null;
       initialCapturedRef.current = false;
       return;
@@ -178,6 +186,9 @@ export default function App() {
       captured = [...lib.videos].sort(sorter).map((v) => v.id);
     }
     setFrozenOrder(captured);
+    const counts = new Map<number, number>();
+    for (const v of lib.videos) counts.set(v.id, v.view_count ?? 0);
+    setFrozenViewCounts(counts);
     capturedSortKeyRef.current = sortKey;
     initialCapturedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,6 +210,22 @@ export default function App() {
   const videosById = useMemo(
     () => new Map(lib.videos.map((v) => [v.id, v])),
     [lib.videos]
+  );
+
+  // Decide what view count to display on a card. For view-based sorts
+  // the UI is frozen: cards show the count captured at the time the
+  // sort was applied, and opening a video has no visible effect. For
+  // all other sorts, cards show the live count from lib.videos (which
+  // openVideo patches in place), so the "X views" badge ticks up
+  // immediately.
+  const getDisplayViewCount = useCallback(
+    (id: number, fallback: number): number => {
+      if (sortKey === 'mostViews' || sortKey === 'leastViews') {
+        return frozenViewCounts.get(id) ?? fallback;
+      }
+      return fallback;
+    },
+    [sortKey, frozenViewCounts]
   );
 
   // Apply current root/search/tag filter on top of the frozen order.
@@ -294,7 +321,7 @@ export default function App() {
             roots={lib.roots}
             tags={lib.tags}
             onOpen={lib.openVideo}
-            getViewCount={lib.getViewCount}
+            getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
           />
@@ -304,7 +331,7 @@ export default function App() {
             roots={lib.roots}
             tags={lib.tags}
             onOpen={lib.openVideo}
-            getViewCount={lib.getViewCount}
+            getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
           />

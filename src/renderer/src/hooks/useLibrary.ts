@@ -29,7 +29,6 @@ export interface LibraryState {
   hideTag: (name: string) => void;
   unhideTag: (name: string) => void;
   unhideAllTags: () => void;
-  getViewCount: (id: number, fallback: number) => number;
   setVideoTag: (videoId: number, tagName: string) => Promise<void>;
   removeVideoTag: (videoId: number, tagName: string) => Promise<void>;
 }
@@ -70,9 +69,6 @@ export function useLibrary(): LibraryState {
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [thumbFailures, setThumbFailures] = useState<ThumbnailFailure[]>([]);
-  const [viewCountOverrides, setViewCountOverrides] = useState<Map<number, number>>(
-    () => new Map()
-  );
   const [userTagNames, setUserTagNames] = useState<string[]>([]);
 
   const hideTag = useCallback((name: string) => {
@@ -253,26 +249,20 @@ export function useLibrary(): LibraryState {
 
   const openVideo = useCallback(async (id: number): Promise<number> => {
     try {
-      const next = await api.openVideo(id);
-      setViewCountOverrides((prev) => {
-        const m = new Map(prev);
-        m.set(id, next);
-        return m;
+      const nextCount = await api.openVideo(id);
+      setVideos((prev) => {
+        const idx = prev.findIndex((v) => v.id === id);
+        if (idx === -1) return prev;
+        const next = prev.slice();
+        next[idx] = { ...next[idx], view_count: nextCount };
+        return next;
       });
-      return next;
+      return nextCount;
     } catch (e) {
       console.error('Open failed:', e);
       return 0;
     }
   }, []);
-
-  const getViewCount = useCallback(
-    (id: number, fallback: number): number => {
-      const v = viewCountOverrides.get(id);
-      return v ?? fallback;
-    },
-    [viewCountOverrides]
-  );
 
   useEffect(() => {
     let mounted = true;
@@ -384,7 +374,6 @@ export function useLibrary(): LibraryState {
     hideTag,
     unhideTag,
     unhideAllTags,
-    getViewCount,
     setVideoTag,
     removeVideoTag
   };
