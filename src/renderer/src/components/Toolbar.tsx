@@ -5,7 +5,6 @@ interface Props {
   hasRoots: boolean;
   isScanning: boolean;
   onAdd: () => void;
-  onRescan: () => void;
   onRetryThumbs: () => void;
   onResetAllThumbs: () => void;
   thumbFailures: ThumbnailFailure[];
@@ -46,7 +45,6 @@ export function Toolbar({
   hasRoots,
   isScanning,
   onAdd,
-  onRescan,
   onRetryThumbs,
   onResetAllThumbs,
   thumbFailures,
@@ -64,27 +62,21 @@ export function Toolbar({
   return (
     <div className="toolbar">
       <SortDropdown value={sortKey} onChange={onSortChange} disabled={!hasRoots} />
-      <input
-        className="search"
-        type="search"
-        placeholder="Search filename & folder…"
-        value={search}
-        onChange={(e) => onSearchChange(e.target.value)}
-        disabled={!hasRoots}
-      />
+      <div className="search-wrap">
+        <svg className="search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M21 21l-4.3-4.3" />
+        </svg>
+        <input
+          className="search"
+          type="search"
+          placeholder="Search filename & folder…"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          disabled={!hasRoots}
+        />
+      </div>
       <div className="toolbar-actions">
-        <button className="btn primary" onClick={onAdd} disabled={isScanning}>
-          Add folder
-        </button>
-        <button
-          className="btn"
-          onClick={onRescan}
-          disabled={!hasRoots || isScanning}
-          title="Rescan the library"
-        >
-          {isScanning ? <span className="spinner" /> : null}
-          {isScanning ? 'Scanning…' : 'Rescan'}
-        </button>
         {thumbFailures.length > 0 ? (
           <div className="thumb-failure-group">
             <button
@@ -105,6 +97,12 @@ export function Toolbar({
             </button>
           </div>
         ) : null}
+        <button className="btn primary" onClick={onAdd} disabled={isScanning}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Add folder
+        </button>
       </div>
     </div>
   );
@@ -121,11 +119,14 @@ export function ScanProgressOverlay({ progress }: { progress: ScanProgress | nul
   return (
     <div className="scan-progress">
       <span className="spinner" />
-      <span>{label}</span>
+      <span className="scan-progress-label">{label}</span>
       {progress.currentFile ? (
-        <span className="file" title={progress.currentFile}>
-          {progress.currentFile.split('/').pop()}
-        </span>
+        <>
+          <span className="scan-progress-divider" />
+          <span className="file" title={progress.currentFile}>
+            {progress.currentFile.split('/').pop()}
+          </span>
+        </>
       ) : null}
     </div>
   );

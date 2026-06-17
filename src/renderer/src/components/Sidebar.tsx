@@ -10,10 +10,12 @@ interface Props {
   selectedRoot: string | null;
   selectedTag: string | null;
   filterUntagged: boolean;
+  isScanning: boolean;
   onSelectRoot: (root: string | null) => void;
   onSelectTag: (tag: string | null) => void;
   onSelectUntagged: () => void;
-  onRemoveRoot: (path: string) => void;
+  onRemoveRoot: (path: string) => Promise<void>;
+  onRescan: () => void;
   onHideTag: (name: string) => void;
 }
 
@@ -41,10 +43,12 @@ export function Sidebar({
   selectedRoot,
   selectedTag,
   filterUntagged,
+  isScanning,
   onSelectRoot,
   onSelectTag,
   onSelectUntagged,
   onRemoveRoot,
+  onRescan,
   onHideTag
 }: Props) {
   const counts = useMemo(() => {
@@ -97,7 +101,10 @@ export function Sidebar({
             }}
             title={r + '\n\nClick to filter · Right-click for options'}
           >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{basename(r)}</span>
+            <svg className="sidebar-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+            </svg>
+            <span className="sidebar-label">{basename(r)}</span>
             <span className="count">{counts.get(r) ?? 0}</span>
           </div>
         );
@@ -105,7 +112,15 @@ export function Sidebar({
 
       {tags.length > 0 || untaggedCount > 0 ? (
         <>
-          <div className="sidebar-section">Tags</div>
+          <div className="sidebar-section">
+            <span className="sidebar-section-row">
+              <svg className="sidebar-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+              </svg>
+              <span>Tags</span>
+            </span>
+          </div>
           {tags.map((t) => {
             const isActive = selectedTag === t.name;
             return (
@@ -119,7 +134,7 @@ export function Sidebar({
                 }}
                 title={`Click to filter · Right-click to remove`}
               >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</span>
+                <span className="sidebar-label">{t.name}</span>
                 <span className="count">{t.count}</span>
               </div>
             );
@@ -131,7 +146,7 @@ export function Sidebar({
               onClick={onSelectUntagged}
               title="Click to filter to untagged videos only"
             >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Untagged</span>
+              <span className="sidebar-label">Untagged</span>
               <span className="count">{untaggedCount}</span>
             </div>
           ) : null}
@@ -145,18 +160,48 @@ export function Sidebar({
           onClick={(e) => e.stopPropagation()}
         >
           {menu.kind === 'root' ? (
-            <button
-              className="context-menu-item danger"
-              onClick={() => {
-                const p = menu.path;
-                setMenu(null);
-                void onRemoveRoot(p);
-              }}
-            >
-              Remove folder from library
-            </button>
+            <>
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  onRescan();
+                }}
+                disabled={isScanning}
+              >
+                <span className="context-menu-icon" aria-hidden="true">
+                  {isScanning ? <span className="spinner" /> : (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 12a9 9 0 1 1-3-6.7" />
+                      <path d="M21 4v5h-5" />
+                    </svg>
+                  )}
+                </span>
+                <span>{isScanning ? 'Scanning…' : 'Rescan library'}</span>
+                <span className="context-menu-shortcut">⌘R</span>
+              </button>
+              <div className="context-menu-separator" />
+              <button
+                type="button"
+                className="context-menu-item danger"
+                onClick={() => {
+                  const p = menu.path;
+                  setMenu(null);
+                  void onRemoveRoot(p);
+                }}
+              >
+                <span className="context-menu-icon" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  </svg>
+                </span>
+                <span>Remove folder from library</span>
+              </button>
+            </>
           ) : (
             <button
+              type="button"
               className="context-menu-item danger"
               onClick={() => {
                 const n = menu.name;
@@ -165,7 +210,12 @@ export function Sidebar({
                 onHideTag(n);
               }}
             >
-              Remove tag
+              <span className="context-menu-icon" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </span>
+              <span>Remove tag</span>
             </button>
           )}
         </div>

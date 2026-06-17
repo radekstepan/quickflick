@@ -331,7 +331,6 @@ export default function App() {
         hasRoots={lib.roots.length > 0}
         isScanning={lib.isScanning}
         onAdd={lib.addFolder}
-        onRescan={lib.rescan}
         onRetryThumbs={lib.retryFailedThumbs}
         onResetAllThumbs={lib.resetAllThumbs}
         thumbFailures={lib.thumbFailures}
@@ -349,10 +348,12 @@ export default function App() {
         selectedRoot={selectedRoot}
         selectedTag={selectedTag}
         filterUntagged={filterUntagged}
+        isScanning={lib.isScanning}
         onSelectRoot={setSelectedRoot}
         onSelectTag={handleSelectTag}
         onSelectUntagged={handleSelectUntagged}
         onRemoveRoot={lib.removeFolder}
+        onRescan={lib.rescan}
         onHideTag={lib.hideTag}
       />
 

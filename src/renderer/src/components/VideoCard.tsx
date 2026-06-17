@@ -155,9 +155,7 @@ export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }:
         {leavingFrame !== null ? renderImg(leavingFrame, 'leaving') : null}
         {renderImg(displayFrame, 'current')}
         {urls.length === 0 ? (
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#666', fontSize: 11 }}>
-            No thumbnail
-          </div>
+          <div className="no-thumb">No thumbnail</div>
         ) : null}
         {showBadge ? <span className="badge cycling">{displayFrame + 1}/{urls.length}</span> : null}
         {video.duration ? <span className="badge">{formatDuration(video.duration)}</span> : null}
@@ -188,11 +186,33 @@ export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }:
                 className="context-menu-item"
                 onClick={() => {
                   setMenu(null);
+                  void api.openVideo(video.id);
+                }}
+              >
+                <span className="context-menu-icon" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="6 4 20 12 6 20 6 4" fill="currentColor" stroke="none" />
+                  </svg>
+                </span>
+                <span>Play</span>
+              </button>
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setMenu(null);
                   void api.revealVideo(video.id);
                 }}
               >
-                Reveal in Finder
+                <span className="context-menu-icon" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                    <path d="M9 13l2 2 4-4" />
+                  </svg>
+                </span>
+                <span>Reveal in Finder</span>
               </button>
+              <div className="context-menu-separator" />
               <button
                 type="button"
                 className="context-menu-item"
@@ -201,7 +221,13 @@ export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }:
                   setPickerOpen(true);
                 }}
               >
-                Edit tags
+                <span className="context-menu-icon" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                    <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+                  </svg>
+                </span>
+                <span>Edit tags</span>
               </button>
             </div>,
             document.body
