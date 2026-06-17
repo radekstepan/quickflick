@@ -393,6 +393,7 @@ input {
   overflow: hidden;
   position: relative;
   background: var(--bg);
+  padding: 16px;
 }
 
 /* === Empty state === */
@@ -476,7 +477,6 @@ input {
   height: 100%;
   width: 100%;
   overflow: auto;
-  padding: 16px;
 }
 
 .group-section {

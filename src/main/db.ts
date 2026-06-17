@@ -3,7 +3,7 @@ import { app } from 'electron';
 import { join } from 'node:path';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { thumbsDirFor } from './thumbnailer';
-import type { Video, Thumbnail, VideoWithThumbs, SortKey } from '../shared/types';
+import type { VideoBase, Thumbnail, VideoWithThumbs, SortKey } from '../shared/types';
 
 export type ThumbStatus = 'pending' | 'ok' | 'failed';
 
@@ -178,7 +178,7 @@ export function removeThumbsForPaths(paths: string[]): number {
 }
 
 export function upsertVideo(
-  v: Omit<Video, 'id' | 'scanned_at' | 'thumb_status' | 'view_count'>
+  v: Omit<VideoBase, 'id' | 'scanned_at' | 'thumb_status' | 'view_count'>
 ): number {
   const stmt = getDb().prepare(`
     INSERT INTO videos (path, folder, filename, size, mtime_ms, duration, width, height, codec, scanned_at)
@@ -247,24 +247,52 @@ export function resetAllThumbs(): { deletedDirs: number; resetRows: number } {
   return { deletedDirs, resetRows: result.changes };
 }
 
-export function getVideoById(id: number): Video | null {
-  const row = getDb().prepare('SELECT * FROM videos WHERE id = ?').get(id) as Video | undefined;
+export function getVideoById(id: number): VideoBase | null {
+  const row = getDb()
+    .prepare('SELECT * FROM videos WHERE id = ?')
+    .get(id) as VideoBase | undefined;
   return row ?? null;
 }
 
-export function getVideoByPath(path: string): Video | null {
-  const row = getDb().prepare('SELECT * FROM videos WHERE path = ?').get(path) as Video | undefined;
+export function getVideoByPath(path: string): VideoBase | null {
+  const row = getDb()
+    .prepare('SELECT * FROM videos WHERE path = ?')
+    .get(path) as VideoBase | undefined;
   return row ?? null;
 }
 
-export function listVideosInFolder(folder: string): Video[] {
+export function getVideoWithRelations(id: number): VideoWithThumbs | null {
+  const base = getVideoById(id);
+  if (!base) return null;
+  return hydrateVideoWithRelations(base);
+}
+
+function hydrateVideoWithRelations(base: VideoBase): VideoWithThumbs {
+  const tagRows = getDb()
+    .prepare('SELECT tag_name FROM video_tags WHERE video_id = ? ORDER BY tag_name')
+    .all(base.id) as { tag_name: string }[];
+  const excludedRows = getDb()
+    .prepare(
+      'SELECT tag_name FROM video_excluded_tags WHERE video_id = ? ORDER BY tag_name'
+    )
+    .all(base.id) as { tag_name: string }[];
+  const thumbnails = getThumbsForVideo(base.id);
+  return {
+    ...base,
+    tags: tagRows.map((r) => r.tag_name),
+    excludedTags: excludedRows.map((r) => r.tag_name),
+    thumbnails
+  };
+}
+
+export function listVideosInFolder(folder: string): VideoBase[] {
   return getDb()
     .prepare('SELECT * FROM videos WHERE folder = ? OR folder LIKE ? ORDER BY filename')
-    .all(folder, `${folder}/%`) as Video[];
+    .all(folder, `${folder}/%`) as VideoBase[];
 }
 
-export function listAllVideos(): Video[] {
-  return getDb().prepare('SELECT * FROM videos ORDER BY filename').all() as Video[];
+export function listAllVideos(): VideoBase[] {
+  return getDb().prepare('SELECT * FROM videos ORDER BY filename').all() as VideoBase[];
 }
 
 export function listAllFolders(): string[] {
@@ -303,7 +331,7 @@ export function listVideos(opts: { folder?: string; search?: string; sort?: Sort
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const rows = getDb()
     .prepare(`SELECT * FROM videos ${whereClause} ORDER BY ${sortCol} ${sortDir} NULLS LAST`)
-    .all(params) as Video[];
+    .all(params) as VideoBase[];
 
   if (rows.length === 0) return [];
 

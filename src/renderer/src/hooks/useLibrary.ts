@@ -304,14 +304,14 @@ export function useLibrary(): LibraryState {
       const existing = byName.get(name);
       if (existing) {
         const userCount = videos.filter((v) =>
-          v.tags.some((t) => t.toLowerCase() === lc)
+          (v.tags ?? []).some((t) => t.toLowerCase() === lc)
         ).length;
         if (userCount > existing.count) {
           byName.set(name, { name, count: userCount });
         }
       } else {
         const userCount = videos.filter((v) =>
-          v.tags.some((t) => t.toLowerCase() === lc)
+          (v.tags ?? []).some((t) => t.toLowerCase() === lc)
         ).length;
         byName.set(name, { name, count: userCount });
       }

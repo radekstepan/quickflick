@@ -1,6 +1,7 @@
 export type ThumbStatus = 'pending' | 'ok' | 'failed';
 
-export interface Video {
+// Columns that actually live in the `videos` table.
+export interface VideoBase {
   id: number;
   path: string;
   folder: string;
@@ -14,6 +15,9 @@ export interface Video {
   codec: string | null;
   thumb_status: ThumbStatus;
   view_count: number;
+}
+
+export interface Video extends VideoBase {
   tags: string[];
   excludedTags: string[];
 }

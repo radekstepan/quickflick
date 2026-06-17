@@ -7,15 +7,21 @@ import {
   markThumbStatus,
   removeStaleVideos,
   upsertVideo,
-  getVideoById,
   getVideoByPath,
+  getVideoWithRelations,
   getThumbsDir,
   getThumbsForVideo
 } from './db';
 import { probeVideo } from './probe';
 import { generateThumbnails, thumbUrl, cacheBustThumbUrl, frameCount } from './thumbnailer';
 import { Queue } from './queue';
-import type { ScanProgress, ScanResult, ThumbnailFailure, Video, VideoWithThumbs } from '../shared/types';
+import type {
+  ScanProgress,
+  ScanResult,
+  ThumbnailFailure,
+  VideoBase,
+  VideoWithThumbs
+} from '../shared/types';
 
 const VIDEO_EXTS = new Set([
   '.mov', '.mp4', '.mkv', '.webm', '.m4v', '.avi', '.flv',
@@ -115,7 +121,7 @@ export async function scanLibrary(
   const removed = removeStaleVideos(validPaths);
 
   // Upsert all + collect (id, path) for thumbnail work
-  const existing = new Map<string, Video>();
+  const existing = new Map<string, VideoBase>();
   for (const v of listAllVideos()) existing.set(v.path, v);
 
   let added = 0;
@@ -170,9 +176,7 @@ export async function scanLibrary(
       duration: prev?.duration ?? null,
       width: prev?.width ?? null,
       height: prev?.height ?? null,
-      codec: prev?.codec ?? null,
-      tags: prev?.tags ?? [],
-      excludedTags: prev?.excludedTags ?? []
+      codec: prev?.codec ?? null
     });
 
     if (!prev) added++;
@@ -180,9 +184,9 @@ export async function scanLibrary(
 
     if (needsThumb) {
       enqueued++;
-      const inserted = getVideoById(id);
+      const inserted = getVideoWithRelations(id);
       if (inserted) {
-        discovered.push({ ...inserted, thumbnails: [] });
+        discovered.push(inserted);
       }
       void thumbQueue.add(async () => {
         processed++;
@@ -216,9 +220,7 @@ export async function scanLibrary(
               duration: probe.duration,
               width: probe.width,
               height: probe.height,
-              codec: probe.codecName,
-              tags: v.tags ?? [],
-              excludedTags: v.excludedTags ?? []
+              codec: probe.codecName
             });
           }
           const safeDuration = probe.duration && probe.duration > 0 ? probe.duration : 60;
@@ -266,7 +268,7 @@ export async function scanLibrary(
           queueDepth: thumbQueue.pending
         });
         if (thumbOk) {
-          const finalV = getVideoById(id);
+          const finalV = getVideoWithRelations(id);
           if (finalV) {
             const thumbs = getThumbsForVideo(id).map((t) => ({
               ...t,

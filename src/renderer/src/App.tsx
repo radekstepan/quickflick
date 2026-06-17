@@ -107,6 +107,11 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [ffmpegDismissed, setFfmpegDismissed] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>(loadSortKey);
+  // Timestamp captured when the user picks a sort. Used by buildDateGroups
+  // so the bucket boundaries (Today / Yesterday / This week / ...) don't
+  // drift if the app stays open across midnight. Refreshed whenever
+  // sortKey changes.
+  const [sortAppliedAt, setSortAppliedAt] = useState<number>(() => Date.now());
 
   const handleSelectTag = useCallback((name: string | null) => {
     setSelectedTag(name);
@@ -152,6 +157,10 @@ export default function App() {
   }, [sortKey]);
 
   useEffect(() => {
+    setSortAppliedAt(Date.now());
+  }, [sortKey]);
+
+  useEffect(() => {
     if (lib.roots.length === 0) {
       if (selectedRoot !== null) setSelectedRoot(null);
       return;
@@ -194,18 +203,46 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lib.videos.length, sortKey]);
 
-  // Sync frozen order with lib.videos on rescan: drop missing IDs,
-  // append newly-discovered IDs to the end.
+  // Sync frozen order with lib.videos on rescan: drop missing IDs and
+  // merge newly-discovered IDs at the correct mtime position when the
+  // active sort is mtime-based (newest/oldest). For other sorts, append
+  // to the end — intra-bucket order isn't strictly defined for them.
   useEffect(() => {
     if (frozenOrder === null) return;
     const libIds = new Set(lib.videos.map((v) => v.id));
     const known = new Set(frozenOrder);
     const kept = frozenOrder.filter((id) => libIds.has(id));
-    const added = lib.videos.map((v) => v.id).filter((id) => !known.has(id));
-    if (kept.length !== frozenOrder.length || added.length > 0) {
-      setFrozenOrder([...kept, ...added]);
+    const added = lib.videos.filter((v) => !known.has(v.id));
+    if (kept.length === frozenOrder.length && added.length === 0) return;
+
+    if (sortKey === 'newest' || sortKey === 'oldest') {
+      const videosById = new Map(lib.videos.map((v) => [v.id, v]));
+      const dir = sortKey === 'newest' ? -1 : 1;
+      added.sort((a, b) => dir * (a.mtime_ms - b.mtime_ms));
+      const merged: number[] = [];
+      let addedIdx = 0;
+      for (const id of kept) {
+        const keptV = videosById.get(id);
+        const keptMtime = keptV?.mtime_ms ?? 0;
+        while (addedIdx < added.length) {
+          const addedV = added[addedIdx];
+          if (dir * (addedV.mtime_ms - keptMtime) < 0) {
+            merged.push(addedV.id);
+            addedIdx++;
+          } else {
+            break;
+          }
+        }
+        merged.push(id);
+      }
+      while (addedIdx < added.length) {
+        merged.push(added[addedIdx++].id);
+      }
+      setFrozenOrder(merged);
+    } else {
+      setFrozenOrder([...kept, ...added.map((v) => v.id)]);
     }
-  }, [lib.videos, frozenOrder]);
+  }, [lib.videos, frozenOrder, sortKey]);
 
   const videosById = useMemo(
     () => new Map(lib.videos.map((v) => [v.id, v])),
@@ -265,6 +302,19 @@ export default function App() {
     return buildTagGroups(displayVideos, lib.tags, lib.roots);
   }, [displayVideos, lib.tags, lib.roots]);
 
+  const groupsByDate = useMemo<VideoGroup[]>(() => {
+    if (sortKey !== 'newest' && sortKey !== 'oldest') return [];
+    return buildDateGroups(displayVideos, sortKey, sortAppliedAt);
+  }, [displayVideos, sortKey, sortAppliedAt]);
+
+  // Single source of truth for the grouped view: non-null when the
+  // current sort key is one of the grouping sorts (tags, newest, oldest).
+  const groups = useMemo<VideoGroup[] | null>(() => {
+    if (sortKey === 'tags') return groupsByTag;
+    if (sortKey === 'newest' || sortKey === 'oldest') return groupsByDate;
+    return null;
+  }, [sortKey, groupsByTag, groupsByDate]);
+
   if (lib.loading) {
     return (
       <div className="empty">
@@ -315,9 +365,9 @@ export default function App() {
             onPick={lib.addFolder}
             onRescan={lib.rescan}
           />
-        ) : sortKey === 'tags' ? (
+        ) : groups ? (
           <GroupedVideoGrid
-            groups={groupsByTag}
+            groups={groups}
             roots={lib.roots}
             tags={lib.tags}
             onOpen={lib.openVideo}
@@ -391,6 +441,45 @@ function buildTagGroups(
   }
   if (untagged.length > 0) {
     out.push({ tag: null, videos: untagged });
+  }
+  return out;
+}
+
+const DATE_BUCKETS_NEWEST = ['Today', 'Yesterday', 'This week', 'This month', 'Older', 'Unknown'] as const;
+const DATE_BUCKETS_OLDEST = ['Older', 'This month', 'This week', 'Yesterday', 'Today', 'Unknown'] as const;
+
+function getDateBucket(mtimeMs: number, now: Date): string {
+  if (!mtimeMs || mtimeMs <= 0) return 'Unknown';
+  const mtime = new Date(mtimeMs);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+  const startOfWeek = startOfToday - 7 * 24 * 60 * 60 * 1000;
+  const startOfMonth = startOfToday - 30 * 24 * 60 * 60 * 1000;
+  if (mtimeMs >= startOfToday) return 'Today';
+  if (mtimeMs >= startOfYesterday) return 'Yesterday';
+  if (mtimeMs >= startOfWeek) return 'This week';
+  if (mtimeMs >= startOfMonth) return 'This month';
+  return 'Older';
+}
+
+function buildDateGroups(
+  videos: VideoWithThumbs[],
+  sortKey: 'newest' | 'oldest',
+  frozenAt: number
+): VideoGroup[] {
+  const order = sortKey === 'newest' ? DATE_BUCKETS_NEWEST : DATE_BUCKETS_OLDEST;
+  const now = new Date(frozenAt);
+  const buckets = new Map<string, VideoWithThumbs[]>();
+  for (const name of order) buckets.set(name, []);
+  for (const v of videos) {
+    const name = getDateBucket(v.mtime_ms, now);
+    buckets.get(name)!.push(v);
+  }
+  const out: VideoGroup[] = [];
+  for (const name of order) {
+    const bucket = buckets.get(name)!;
+    if (bucket.length === 0) continue;
+    out.push({ tag: name, videos: bucket });
   }
   return out;
 }

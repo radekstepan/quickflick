@@ -84,7 +84,6 @@ const GridList = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>
           gridTemplateColumns:
             `repeat(var(--grid-cols, 1), minmax(${MIN_CARD}px, 1fr))`,
           gap: GAP,
-          padding: 16,
           alignContent: 'start',
           ...style
         }}
