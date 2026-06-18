@@ -249,15 +249,7 @@ export function useLibrary(): LibraryState {
 
   const openVideo = useCallback(async (id: number): Promise<number> => {
     try {
-      const nextCount = await api.openVideo(id);
-      setVideos((prev) => {
-        const idx = prev.findIndex((v) => v.id === id);
-        if (idx === -1) return prev;
-        const next = prev.slice();
-        next[idx] = { ...next[idx], view_count: nextCount };
-        return next;
-      });
-      return nextCount;
+      return await api.openVideo(id);
     } catch (e) {
       console.error('Open failed:', e);
       return 0;
@@ -338,9 +330,23 @@ export function useLibrary(): LibraryState {
         return next;
       });
     });
+    const unsubViewed = api.onVideoViewed((payload) => {
+      setVideos((prev) => {
+        const idx = prev.findIndex((v) => v.id === payload.id);
+        if (idx === -1) return prev;
+        const next = prev.slice();
+        next[idx] = {
+          ...next[idx],
+          view_count: payload.view_count,
+          view_time_ms: payload.view_time_ms
+        };
+        return next;
+      });
+    });
     return () => {
       unsubDiscovered();
       unsubThumbed();
+      unsubViewed();
     };
   }, []);
 

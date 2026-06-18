@@ -169,6 +169,7 @@ function mkVideo(id: number, mtime_ms: number): VideoWithThumbs {
     codec: 'h264',
     thumb_status: 'ok',
     view_count: 0,
+    view_time_ms: 0,
     tags: [],
     excludedTags: [],
     thumbnails: []

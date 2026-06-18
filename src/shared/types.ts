@@ -15,6 +15,7 @@ export interface VideoBase {
   codec: string | null;
   thumb_status: ThumbStatus;
   view_count: number;
+  view_time_ms: number;
 }
 
 export interface Video extends VideoBase {
@@ -77,7 +78,9 @@ export type SortKey =
   | 'size'
   | 'duration'
   | 'viewCount'
-  | 'viewCount_asc';
+  | 'viewCount_asc'
+  | 'popularity'
+  | 'popularity_asc';
 
 export interface ListOptions {
   folder?: string;
@@ -89,6 +92,12 @@ export type MenuCommand = 'rescan';
 
 export interface RemoveRootResult {
   removedVideos: number;
+}
+
+export interface VideoViewedEvent {
+  id: number;
+  view_count: number;
+  view_time_ms: number;
 }
 
 export interface Api {
@@ -106,6 +115,7 @@ export interface Api {
   onMenuCommand: (cb: (cmd: MenuCommand) => void) => () => void;
   onVideosDiscovered: (cb: (rows: VideoWithThumbs[]) => void) => () => void;
   onVideoThumbed: (cb: (row: VideoWithThumbs) => void) => () => void;
+  onVideoViewed: (cb: (e: VideoViewedEvent) => void) => () => void;
   getFfmpegStatus: () => Promise<FfmpegStatus>;
   showItemInFolder: (path: string) => Promise<void>;
   setVideoTag: (videoId: number, tagName: string) => Promise<void>;

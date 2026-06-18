@@ -7,7 +7,6 @@ import {
   getAllUserTagNames,
   getThumbsDir,
   getVideoById,
-  incrementViewCount,
   listAllFolders,
   listRoots,
   listVideos,
@@ -22,12 +21,21 @@ import {
 import { checkFfmpeg, checkFfprobe } from './ffmpeg';
 import { scanLibrary } from './scanner';
 import { thumbUrl, cacheBustThumbUrl } from './thumbnailer';
-import type { ListOptions, ScanProgress, ScanResult, VideoWithThumbs } from '../shared/types';
+import { attachToWindow as attachViewTracker, setViewedEmitter, startView } from './viewTracker';
+import type {
+  ListOptions,
+  ScanProgress,
+  ScanResult,
+  VideoViewedEvent,
+  VideoWithThumbs
+} from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
 
 export function setMainWindow(win: BrowserWindow): void {
   mainWindow = win;
+  attachViewTracker(win);
+  setViewedEmitter(emitVideoViewed);
 }
 
 export function getMainWindow(): BrowserWindow | null {
@@ -49,6 +57,12 @@ function emitVideosDiscovered(rows: VideoWithThumbs[]): void {
 function emitVideoThumbed(row: VideoWithThumbs): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('library:videoThumbed', row);
+  }
+}
+
+function emitVideoViewed(payload: VideoViewedEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('video:viewed', payload);
   }
 }
 
@@ -136,10 +150,10 @@ export function registerIpc(): void {
   ipcMain.handle('video:open', async (_e, id: number): Promise<number> => {
     const v = getVideoById(id);
     if (!v) throw new Error('Video not found');
-    const newCount = incrementViewCount(id);
     const result = await shell.openPath(v.path);
     if (result) throw new Error(result);
-    return newCount;
+    startView(id);
+    return v.view_count;
   });
 
   ipcMain.handle('video:reveal', async (_e, id: number) => {

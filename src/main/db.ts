@@ -108,6 +108,9 @@ export function initDb(): void {
   if (!hasColumn(db, 'videos', 'view_count')) {
     db.exec('ALTER TABLE videos ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0');
   }
+  if (!hasColumn(db, 'videos', 'view_time_ms')) {
+    db.exec('ALTER TABLE videos ADD COLUMN view_time_ms INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
@@ -178,7 +181,7 @@ export function removeThumbsForPaths(paths: string[]): number {
 }
 
 export function upsertVideo(
-  v: Omit<VideoBase, 'id' | 'scanned_at' | 'thumb_status' | 'view_count'>
+  v: Omit<VideoBase, 'id' | 'scanned_at' | 'thumb_status' | 'view_count' | 'view_time_ms'>
 ): number {
   const stmt = getDb().prepare(`
     INSERT INTO videos (path, folder, filename, size, mtime_ms, duration, width, height, codec, scanned_at)
@@ -209,11 +212,22 @@ export function markThumbStatus(id: number, status: ThumbStatus): void {
   getDb().prepare('UPDATE videos SET thumb_status = ? WHERE id = ?').run(status, id);
 }
 
-export function incrementViewCount(id: number): number {
+export function recordView(id: number, viewTimeMs: number): { view_count: number; view_time_ms: number } | null {
   const row = getDb()
-    .prepare('UPDATE videos SET view_count = view_count + 1 WHERE id = ? RETURNING view_count')
-    .get(id) as { view_count: number } | undefined;
-  return row?.view_count ?? 0;
+    .prepare(
+      'UPDATE videos SET view_count = view_count + 1, view_time_ms = view_time_ms + ? WHERE id = ? RETURNING view_count, view_time_ms'
+    )
+    .get(Math.max(0, Math.floor(viewTimeMs)), id) as
+    | { view_count: number; view_time_ms: number }
+    | undefined;
+  return row ?? null;
+}
+
+export function getVideoDurationSec(id: number): number | null {
+  const row = getDb()
+    .prepare('SELECT duration FROM videos WHERE id = ?')
+    .get(id) as { duration: number | null } | undefined;
+  return row?.duration ?? null;
 }
 
 export function resetFailedThumbs(): number {
@@ -304,16 +318,27 @@ export function listAllFolders(): string[] {
 
 export function listVideos(opts: { folder?: string; search?: string; sort?: SortKey } = {}): VideoWithThumbs[] {
   const sort = opts.sort ?? 'name';
-  const sortCol = {
-    name: 'filename',
-    mtime: 'mtime_ms',
-    mtime_asc: 'mtime_ms',
-    size: 'size',
-    duration: 'duration',
-    viewCount: 'view_count',
-    viewCount_asc: 'view_count'
-  }[sort];
-  const sortDir = sort === 'mtime_asc' || sort === 'viewCount_asc' ? 'ASC' : 'DESC';
+  const sortDir = sort === 'mtime_asc' || sort === 'viewCount_asc' || sort === 'popularity_asc' ? 'ASC' : 'DESC';
+  const orderClause = (() => {
+    switch (sort) {
+      case 'name':
+        return `ORDER BY filename ${sortDir} NULLS LAST`;
+      case 'mtime':
+      case 'mtime_asc':
+        return `ORDER BY mtime_ms ${sortDir} NULLS LAST`;
+      case 'size':
+        return `ORDER BY size ${sortDir} NULLS LAST`;
+      case 'duration':
+        return `ORDER BY duration ${sortDir} NULLS LAST`;
+      case 'viewCount':
+      case 'viewCount_asc':
+        return `ORDER BY view_count ${sortDir} NULLS LAST`;
+      case 'popularity':
+        return `ORDER BY view_count DESC, view_time_ms DESC NULLS LAST`;
+      case 'popularity_asc':
+        return `ORDER BY view_count ASC, view_time_ms ASC NULLS LAST`;
+    }
+  })();
 
   const where: string[] = [];
   const params: Record<string, unknown> = {};
@@ -330,7 +355,7 @@ export function listVideos(opts: { folder?: string; search?: string; sort?: Sort
 
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const rows = getDb()
-    .prepare(`SELECT * FROM videos ${whereClause} ORDER BY ${sortCol} ${sortDir} NULLS LAST`)
+    .prepare(`SELECT * FROM videos ${whereClause} ${orderClause}`)
     .all(params) as VideoBase[];
 
   if (rows.length === 0) return [];

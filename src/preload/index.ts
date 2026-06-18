@@ -6,6 +6,7 @@ import type {
   ScanProgress,
   FfmpegStatus,
   ScanResult,
+  VideoViewedEvent,
   VideoWithThumbs,
   MenuCommand
 } from '../shared/types';
@@ -41,6 +42,11 @@ const api: Api = {
     const listener = (_e: unknown, row: VideoWithThumbs) => cb(row);
     ipcRenderer.on('library:videoThumbed', listener);
     return () => ipcRenderer.removeListener('library:videoThumbed', listener);
+  },
+  onVideoViewed: (cb) => {
+    const listener = (_e: unknown, payload: VideoViewedEvent) => cb(payload);
+    ipcRenderer.on('video:viewed', listener);
+    return () => ipcRenderer.removeListener('video:viewed', listener);
   },
   getFfmpegStatus: () => ipcRenderer.invoke('ffmpeg:status') as Promise<FfmpegStatus>,
   showItemInFolder: (_path: string) => Promise.resolve(),

@@ -5,8 +5,8 @@ export type SortKey =
   | 'tags'
   | 'newest'
   | 'oldest'
-  | 'mostViews'
-  | 'leastViews';
+  | 'popularity'
+  | 'popularity_asc';
 
 interface Option {
   value: SortKey;
@@ -18,8 +18,8 @@ const OPTIONS: Option[] = [
   { value: 'tags', label: 'Tags' },
   { value: 'newest', label: 'Newest' },
   { value: 'oldest', label: 'Oldest' },
-  { value: 'mostViews', label: 'Most viewed' },
-  { value: 'leastViews', label: 'Least viewed' }
+  { value: 'popularity', label: 'Most popular' },
+  { value: 'popularity_asc', label: 'Least popular' }
 ];
 
 interface Props {

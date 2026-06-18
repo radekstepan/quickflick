@@ -5,6 +5,7 @@ import { access } from 'node:fs/promises';
 import { initDb, closeDb, addRoot, getDbPath, getThumbsDir, listAllVideos } from './db';
 import { registerIpc, setMainWindow, getMainWindow } from './ipc';
 import { scanLibrary } from './scanner';
+import { flushOnQuit as flushViewTracker } from './viewTracker';
 
 const isDev = !app.isPackaged;
 
@@ -208,6 +209,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  flushViewTracker();
   closeDb();
   // In dev mode, signal the parent (pnpm/electron-vite) so the terminal
   // returns after Cmd+Q. Controlled by QFKILL_PARENT (set in the dev script).

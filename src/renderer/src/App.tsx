@@ -29,8 +29,8 @@ const VALID_SORT_KEYS: ReadonlySet<SortKey> = new Set([
   'tags',
   'newest',
   'oldest',
-  'mostViews',
-  'leastViews'
+  'popularity',
+  'popularity_asc'
 ]);
 
 const SORT_KEY_STORAGE = 'qf:sortKey';
@@ -110,12 +110,15 @@ function byMtime(dir: 'asc' | 'desc'): Sorter {
   };
 }
 
-function byViewCount(dir: 'asc' | 'desc'): Sorter {
+function byPopularity(dir: 'asc' | 'desc'): Sorter {
   return (a, b) => {
     const av = a.view_count ?? 0;
     const bv = b.view_count ?? 0;
-    if (av === bv) return 0;
-    return dir === 'desc' ? bv - av : av - bv;
+    if (av !== bv) return dir === 'desc' ? bv - av : av - bv;
+    const at = a.view_time_ms ?? 0;
+    const bt = b.view_time_ms ?? 0;
+    if (at === bt) return 0;
+    return dir === 'desc' ? bt - at : at - bt;
   };
 }
 
@@ -125,10 +128,10 @@ function pickSorter(key: SortKey, roots: string[]): Sorter {
       return byMtime('desc');
     case 'oldest':
       return byMtime('asc');
-    case 'mostViews':
-      return byViewCount('desc');
-    case 'leastViews':
-      return byViewCount('asc');
+    case 'popularity':
+      return byPopularity('desc');
+    case 'popularity_asc':
+      return byPopularity('asc');
     case 'name':
       return byFilename(roots);
     case 'tags':
@@ -187,14 +190,9 @@ export default function App() {
   // non-empty, and re-captured when the user picks a new sort key. Click
   // events, rescans, and filter changes do NOT update this order during
   // the current session. The new order takes effect on next app launch.
+  // View counts and view time on cards update live via the
+  // video:viewed IPC event regardless of which sort is active.
   const [frozenOrder, setFrozenOrder] = useState<number[] | null>(null);
-  // Snapshot of view_count values at the time `frozenOrder` was captured.
-  // Used to display counts on view-sorted cards so they stay frozen
-  // alongside the order. For non-view sorts, cards show the live count
-  // from lib.videos (which is patched by openVideo).
-  const [frozenViewCounts, setFrozenViewCounts] = useState<Map<number, number>>(
-    () => new Map()
-  );
   const capturedSortKeyRef = useRef<SortKey | null>(null);
   const initialCapturedRef = useRef(false);
 
@@ -246,7 +244,6 @@ export default function App() {
   useEffect(() => {
     if (lib.videos.length === 0) {
       if (frozenOrder !== null) setFrozenOrder(null);
-      if (frozenViewCounts.size > 0) setFrozenViewCounts(new Map());
       capturedSortKeyRef.current = null;
       initialCapturedRef.current = false;
       return;
@@ -265,9 +262,6 @@ export default function App() {
       captured = [...lib.videos].sort(sorter).map((v) => v.id);
     }
     setFrozenOrder(captured);
-    const counts = new Map<number, number>();
-    for (const v of lib.videos) counts.set(v.id, v.view_count ?? 0);
-    setFrozenViewCounts(counts);
     capturedSortKeyRef.current = sortKey;
     initialCapturedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -319,20 +313,14 @@ export default function App() {
     [lib.videos]
   );
 
-  // Decide what view count to display on a card. For view-based sorts
-  // the UI is frozen: cards show the count captured at the time the
-  // sort was applied, and opening a video has no visible effect. For
-  // all other sorts, cards show the live count from lib.videos (which
-  // openVideo patches in place), so the "X views" badge ticks up
-  // immediately.
+  // Cards always show the live view_count from lib.videos, which is
+  // patched in place by the video:viewed IPC event after the user
+  // returns to the app. The popularity sort freezes the ORDER so the
+  // grid doesn't shuffle mid-session, but the per-card "X views · Ym"
+  // badge ticks up immediately.
   const getDisplayViewCount = useCallback(
-    (id: number, fallback: number): number => {
-      if (sortKey === 'mostViews' || sortKey === 'leastViews') {
-        return frozenViewCounts.get(id) ?? fallback;
-      }
-      return fallback;
-    },
-    [sortKey, frozenViewCounts]
+    (_id: number, fallback: number): number => fallback,
+    []
   );
 
   // Apply current root/search/tag filter on top of the frozen order.

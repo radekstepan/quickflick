@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDuration, formatSize, formatViews } from './VideoCard';
+import { formatDuration, formatSize, formatViews, viewsLabel } from './VideoCard';
 
 describe('formatDuration', () => {
   it('returns empty string for null', () => {
@@ -68,5 +68,23 @@ describe('formatViews', () => {
 
   it('uses plural for >1', () => {
     expect(formatViews(42)).toBe('42 views');
+  });
+});
+
+describe('viewsLabel', () => {
+  it('omits the time suffix when view_time_ms is zero', () => {
+    expect(viewsLabel(7, 0)).toBe('7 views');
+  });
+
+  it('appends minutes', () => {
+    expect(viewsLabel(5, 23 * 60_000)).toBe('5 views · 23m');
+  });
+
+  it('appends hours and minutes', () => {
+    expect(viewsLabel(3, 60 * 60_000 + 12 * 60_000)).toBe('3 views · 1h 12m');
+  });
+
+  it('uses singular for 1 view with a time suffix', () => {
+    expect(viewsLabel(1, 5 * 60_000)).toBe('1 view · 5m');
   });
 });

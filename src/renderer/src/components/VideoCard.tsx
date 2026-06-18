@@ -5,6 +5,7 @@ import { usePreloadedImages } from '../hooks/usePreloadedImages';
 import { api } from '../api';
 import { displayName } from '../utils/displayName';
 import { getMatchingTags, type Tag } from '../utils/tags';
+import { formatViewsWithTime } from '../utils/formatViewTime';
 import { TagPickerModal } from './TagPickerModal';
 import type { VideoWithThumbs } from '@shared/types';
 
@@ -37,6 +38,10 @@ export function formatSize(bytes: number): string {
 export function formatViews(n: number): string {
   if (n === 1) return '1 view';
   return `${n} views`;
+}
+
+export function viewsLabel(viewCount: number, viewTimeMs: number): string {
+  return formatViewsWithTime(viewCount, viewTimeMs);
 }
 
 export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }: Props) {
@@ -171,7 +176,7 @@ export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }:
           {video.width && video.height ? <span className="dot" /> : null}
           <span>{formatSize(video.size)}</span>
           <span className="dot" />
-          <span>{formatViews(video.view_count)}</span>
+          <span data-testid="views-label">{formatViewsWithTime(video.view_count, video.view_time_ms ?? 0)}</span>
         </div>
       </div>
       {menu
