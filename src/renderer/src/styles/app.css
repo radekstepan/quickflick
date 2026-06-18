@@ -713,6 +713,12 @@ input[type='search']::-webkit-search-cancel-button {
   font-variant-numeric: tabular-nums;
 }
 
+.scan-progress-eta {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
 .scan-progress-divider {
   width: 1px;
   height: 12px;

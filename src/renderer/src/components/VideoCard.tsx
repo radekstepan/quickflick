@@ -17,7 +17,7 @@ interface Props {
   onRemoveTag: (id: number, name: string) => void;
 }
 
-function formatDuration(seconds: number | null): string {
+export function formatDuration(seconds: number | null): string {
   if (!seconds || !Number.isFinite(seconds)) return '';
   const total = Math.round(seconds);
   const h = Math.floor(total / 3600);
@@ -27,14 +27,14 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-function formatViews(n: number): string {
+export function formatViews(n: number): string {
   if (n === 1) return '1 view';
   return `${n} views`;
 }

@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import type { ScanProgress, ThumbnailFailure } from '@shared/types';
 import { SortDropdown, type SortKey } from './SortDropdown';
+import { estimateEtaMs, formatEta, type EtaSample } from '../utils/eta';
 
 interface Props {
   hasRoots: boolean;
@@ -14,7 +16,7 @@ interface Props {
   onSortChange: (next: SortKey) => void;
 }
 
-function codecBreakdown(failures: ThumbnailFailure[]): string {
+export function codecBreakdown(failures: ThumbnailFailure[]): string {
   const counts = new Map<string, number>();
   for (const f of failures) {
     const key = f.codec ?? 'unknown';
@@ -25,12 +27,12 @@ function codecBreakdown(failures: ThumbnailFailure[]): string {
     .join(', ');
 }
 
-function trimError(msg: string, max = 200): string {
+export function trimError(msg: string, max = 200): string {
   if (msg.length <= max) return msg;
   return msg.slice(0, max) + '…';
 }
 
-function formatFailure(f: ThumbnailFailure): string {
+export function formatFailure(f: ThumbnailFailure): string {
   const header = `${f.path} (${f.codec ?? '?'}${f.codecTag ? ` / ${f.codecTag}` : ''})`;
   if (!f.attempts || f.attempts.length === 0) {
     return `${header}\n  ${trimError(f.error)}`;
@@ -109,17 +111,53 @@ export function Toolbar({
 }
 
 export function ScanProgressOverlay({ progress }: { progress: ScanProgress | null }) {
-  if (!progress || progress.phase === 'done') return null;
+  const samplesRef = useRef<EtaSample[]>([]);
+  const lastProcessedRef = useRef<number>(-1);
+
+  if (!progress || progress.phase === 'done') {
+    samplesRef.current = [];
+    lastProcessedRef.current = -1;
+    return null;
+  }
+
+  // Track thumbnailing progress for ETA. Skip walking phase (no reliable total).
+  if (progress.phase === 'thumbnailing' && progress.processed !== lastProcessedRef.current) {
+    lastProcessedRef.current = progress.processed;
+    const samples = samplesRef.current;
+    const now = performance.now();
+    if (samples.length === 0 || samples[samples.length - 1]!.time !== now) {
+      samples.push({ time: now, processed: progress.processed });
+      if (samples.length > 6) samples.shift();
+    }
+  } else if (progress.phase !== 'thumbnailing') {
+    samplesRef.current = [];
+    lastProcessedRef.current = -1;
+  }
+
   const label =
     progress.phase === 'walking'
       ? `Walking… ${progress.processed} found`
       : progress.phase === 'probing'
       ? `Probing ${progress.processed}/${progress.total}`
       : `Thumbnails ${progress.processed}/${progress.total}`;
+
+  let eta: string | null = null;
+  if (progress.phase === 'thumbnailing' && progress.total > 0) {
+    const remaining = progress.total - progress.processed;
+    const ms = estimateEtaMs(samplesRef.current, remaining);
+    if (ms !== null) eta = formatEta(ms);
+  }
+
   return (
     <div className="scan-progress">
       <span className="spinner" />
       <span className="scan-progress-label">{label}</span>
+      {eta ? (
+        <>
+          <span className="scan-progress-divider" />
+          <span className="scan-progress-eta">{eta} remaining</span>
+        </>
+      ) : null}
       {progress.currentFile ? (
         <>
           <span className="scan-progress-divider" />

@@ -3,9 +3,18 @@ interface Props {
   videoCount: number;
   onPick: () => void;
   onRescan: () => void;
+  onClearFilters?: () => void;
+  hasActiveFilter?: boolean;
 }
 
-export function EmptyState({ hasLibrary, videoCount, onPick, onRescan }: Props) {
+export function EmptyState({
+  hasLibrary,
+  videoCount,
+  onPick,
+  onRescan,
+  onClearFilters,
+  hasActiveFilter
+}: Props) {
   if (!hasLibrary) {
     return (
       <div className="empty">
@@ -27,6 +36,35 @@ export function EmptyState({ hasLibrary, videoCount, onPick, onRescan }: Props) 
           </svg>
           Pick a folder
         </button>
+      </div>
+    );
+  }
+
+  if (hasActiveFilter) {
+    return (
+      <div className="empty">
+        <div className="empty-icon" aria-hidden="true">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.3-4.3" />
+            <path d="M8 11h6" />
+          </svg>
+        </div>
+        <div className="empty-title">No matches</div>
+        <div className="empty-sub">
+          {videoCount > 0
+            ? `${videoCount} video${videoCount === 1 ? '' : 's'} in your library, but none match the current filter.`
+            : 'No videos in your library match the current filter.'}
+          {' '}Try a different search term or clear the filter.
+        </div>
+        {onClearFilters ? (
+          <button className="btn primary" onClick={onClearFilters}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+            Clear filters
+          </button>
+        ) : null}
       </div>
     );
   }

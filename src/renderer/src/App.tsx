@@ -11,7 +11,7 @@ import { displayName } from './utils/displayName';
 import type { SortKey } from './components/SortDropdown';
 import type { VideoWithThumbs } from '@shared/types';
 
-function formatSearchInput(raw: string): string {
+export function formatSearchInput(raw: string): string {
   return raw
     .replace(/[-_.]+/g, ' ')
     .split(/\s+/)
@@ -20,7 +20,7 @@ function formatSearchInput(raw: string): string {
     .join(' ');
 }
 
-function normalizeForSearch(s: string): string {
+export function normalizeForSearch(s: string): string {
   return s.toLowerCase().replace(/[-_.]+/g, ' ');
 }
 
@@ -34,6 +34,10 @@ const VALID_SORT_KEYS: ReadonlySet<SortKey> = new Set([
 ]);
 
 const SORT_KEY_STORAGE = 'qf:sortKey';
+const SELECTED_ROOT_STORAGE = 'qf:selectedRoot';
+const SELECTED_TAG_STORAGE = 'qf:selectedTag';
+const FILTER_UNTAGGED_STORAGE = 'qf:filterUntagged';
+const SEARCH_STORAGE = 'qf:search';
 
 function loadSortKey(): SortKey {
   try {
@@ -50,6 +54,41 @@ function saveSortKey(key: SortKey): void {
     localStorage.setItem(SORT_KEY_STORAGE, key);
   } catch {
     // ignore quota / disabled storage
+  }
+}
+
+function loadStoredString(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function loadStoredBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === '1';
+  } catch {
+    return fallback;
+  }
+}
+
+function saveStoredString(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // ignore quota / disabled storage
+  }
+}
+
+function saveStoredBoolean(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, value ? '1' : '0');
+  } catch {
+    // ignore
   }
 }
 
@@ -101,10 +140,10 @@ function pickSorter(key: SortKey, roots: string[]): Sorter {
 
 export default function App() {
   const lib = useLibrary();
-  const [selectedRoot, setSelectedRoot] = useState<string | null>(null);
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [filterUntagged, setFilterUntagged] = useState(false);
-  const [search, setSearch] = useState('');
+  const [selectedRoot, setSelectedRoot] = useState<string | null>(() => loadStoredString(SELECTED_ROOT_STORAGE));
+  const [selectedTag, setSelectedTag] = useState<string | null>(() => loadStoredString(SELECTED_TAG_STORAGE));
+  const [filterUntagged, setFilterUntagged] = useState<boolean>(() => loadStoredBoolean(FILTER_UNTAGGED_STORAGE, false));
+  const [search, setSearch] = useState<string>(() => loadStoredString(SEARCH_STORAGE) ?? '');
   const [ffmpegDismissed, setFfmpegDismissed] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>(loadSortKey);
   // Timestamp captured when the user picks a sort. Used by buildDateGroups
@@ -121,6 +160,13 @@ export default function App() {
   const handleSelectUntagged = useCallback(() => {
     setFilterUntagged((prev) => !prev);
     setSelectedTag(null);
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setSelectedRoot(null);
+    setSelectedTag(null);
+    setFilterUntagged(false);
+    setSearch('');
   }, []);
 
   const untaggedCount = useMemo(() => {
@@ -157,6 +203,22 @@ export default function App() {
   }, [sortKey]);
 
   useEffect(() => {
+    saveStoredString(SELECTED_ROOT_STORAGE, selectedRoot);
+  }, [selectedRoot]);
+
+  useEffect(() => {
+    saveStoredString(SELECTED_TAG_STORAGE, selectedTag);
+  }, [selectedTag]);
+
+  useEffect(() => {
+    saveStoredBoolean(FILTER_UNTAGGED_STORAGE, filterUntagged);
+  }, [filterUntagged]);
+
+  useEffect(() => {
+    saveStoredString(SEARCH_STORAGE, search);
+  }, [search]);
+
+  useEffect(() => {
     setSortAppliedAt(Date.now());
   }, [sortKey]);
 
@@ -169,6 +231,14 @@ export default function App() {
       setSelectedRoot(lib.roots[0]);
     }
   }, [lib.roots, selectedRoot]);
+
+  // If the persisted tag no longer exists in the current tag set, clear it.
+  useEffect(() => {
+    if (selectedTag === null) return;
+    if (lib.tags.length > 0 && !lib.tags.some((t) => t.name === selectedTag)) {
+      setSelectedTag(null);
+    }
+  }, [lib.tags, selectedTag]);
 
   // Capture (or re-capture on sort change). Narrow deps on purpose:
   // we explicitly do NOT want this to re-run on rescan, filter, or
@@ -315,6 +385,9 @@ export default function App() {
     return null;
   }, [sortKey, groupsByTag, groupsByDate]);
 
+  const hasActiveFilter =
+    selectedRoot !== null || selectedTag !== null || filterUntagged || search.trim() !== '';
+
   if (lib.loading) {
     return (
       <div className="empty">
@@ -365,6 +438,8 @@ export default function App() {
             videoCount={lib.videos.length}
             onPick={lib.addFolder}
             onRescan={lib.rescan}
+            onClearFilters={clearFilters}
+            hasActiveFilter={hasActiveFilter && lib.videos.length > 0}
           />
         ) : groups ? (
           <GroupedVideoGrid
@@ -399,7 +474,7 @@ export default function App() {
   );
 }
 
-function buildTagGroups(
+export function buildTagGroups(
   videos: VideoWithThumbs[],
   tags: ReadonlyArray<Tag>,
   roots: string[]
@@ -449,7 +524,7 @@ function buildTagGroups(
 const DATE_BUCKETS_NEWEST = ['Today', 'Yesterday', 'This week', 'This month', 'Older', 'Unknown'] as const;
 const DATE_BUCKETS_OLDEST = ['Older', 'This month', 'This week', 'Yesterday', 'Today', 'Unknown'] as const;
 
-function getDateBucket(mtimeMs: number, now: Date): string {
+export function getDateBucket(mtimeMs: number, now: Date): string {
   if (!mtimeMs || mtimeMs <= 0) return 'Unknown';
   const mtime = new Date(mtimeMs);
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -463,7 +538,7 @@ function getDateBucket(mtimeMs: number, now: Date): string {
   return 'Older';
 }
 
-function buildDateGroups(
+export function buildDateGroups(
   videos: VideoWithThumbs[],
   sortKey: 'newest' | 'oldest',
   frozenAt: number
