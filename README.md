@@ -69,11 +69,18 @@ This walks the folder, generates thumbnails, and prints results to stdout.
 
 | What | Path |
 |---|---|
-| SQLite cache | `~/Library/Application Support/QuickFlick/cache.db` |
+| SQLite cache (dev) | `<repo>/db/library.db` (gitignored) |
+| SQLite cache (packaged) | `~/Library/Application Support/QuickFlick/library.db` |
+| Daily DB backups | `<same dir as library.db>/YYYY-MM-DD.library.db.bak` — kept for 7 days |
 | Thumbnail JPGs | `~/Library/Caches/QuickFlick/thumbs/<sha1>/thumb_001.jpg..008.jpg` |
-| Library path | Stored in the `kv` table inside `cache.db` |
+| Library path | Stored in the `kv` table inside `library.db` |
 
-To reset, delete that folder.
+To reset, delete that folder. In dev, delete `./db/`.
+
+> On first start after upgrading from a pre-rename build, the app copies the
+> legacy `userData/cache.db` into the new location and leaves the original
+> in place as a snapshot. Safe to delete manually once you've verified the
+> new file works.
 
 ## Architecture
 

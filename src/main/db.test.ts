@@ -1,12 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
 vi.mock('electron', () => ({
   app: {
+    isPackaged: true,
     getPath: (_name: string) => process.env['QF_TEST_USER_DATA'] ?? '/tmp'
   }
 }));
@@ -26,7 +27,9 @@ import {
   setVideoTag,
   removeStaleVideos,
   insertThumbnails,
-  getThumbsForVideo
+  getThumbsForVideo,
+  backupCacheDbIfNewDay,
+  migrateLegacyCacheDb
 } from './db';
 
 let dir: string;
@@ -363,5 +366,175 @@ describe('schema migration', () => {
     expect(v.view_time_ms).toBe(0);
     expect(v.thumb_status).toBe('pending');
     expect(v.content_fingerprint).toBeNull();
+  });
+});
+
+describe('backupCacheDbIfNewDay', () => {
+  // Use a dedicated, isolated directory for the backup tests so we don't
+  // collide with the `library.db` already created by the outer beforeEach.
+  let backupDir: string;
+
+  beforeEach(() => {
+    backupDir = mkdtempSync(join(tmpdir(), 'qf-backup-'));
+  });
+
+  afterEach(() => {
+    rmSync(backupDir, { recursive: true, force: true });
+  });
+
+  function seedDb(dir: string): void {
+    const db = new Database(join(dir, 'library.db'));
+    db.exec('CREATE TABLE t (x INTEGER)');
+    db.close();
+  }
+
+  it('creates a YYYY-MM-DD.library.db.bak file on first run', () => {
+    seedDb(backupDir);
+    const noon = new Date(2026, 5, 22, 12, 0, 0); // 2026-06-22 local
+
+    backupCacheDbIfNewDay(backupDir, noon);
+
+    expect(existsSync(join(backupDir, '2026-06-22.library.db.bak'))).toBe(true);
+  });
+
+  it('does not create a second backup on the same day', () => {
+    seedDb(backupDir);
+    const noon = new Date(2026, 5, 22, 12, 0, 0);
+
+    backupCacheDbIfNewDay(backupDir, noon);
+    backupCacheDbIfNewDay(backupDir, noon);
+
+    const backups = readdirSync(backupDir).filter((e) => e.endsWith('.library.db.bak'));
+    expect(backups).toHaveLength(1);
+  });
+
+  it('creates a new backup when the date advances', () => {
+    seedDb(backupDir);
+
+    backupCacheDbIfNewDay(backupDir, new Date(2026, 5, 22, 12, 0, 0));
+    backupCacheDbIfNewDay(backupDir, new Date(2026, 5, 23, 12, 0, 0));
+
+    expect(existsSync(join(backupDir, '2026-06-22.library.db.bak'))).toBe(true);
+    expect(existsSync(join(backupDir, '2026-06-23.library.db.bak'))).toBe(true);
+  });
+
+  it('is a no-op when no library.db exists yet', () => {
+    expect(() => backupCacheDbIfNewDay(backupDir, new Date(2026, 5, 22))).not.toThrow();
+    expect(readdirSync(backupDir).filter((e) => e.endsWith('.library.db.bak'))).toEqual([]);
+  });
+
+  it('prunes to the 7 most recent backups', () => {
+    seedDb(backupDir);
+    // Pre-create 10 fake backups spanning 10 days, oldest first.
+    for (let i = 1; i <= 10; i++) {
+      const day = String(i).padStart(2, '0');
+      writeFileSync(join(backupDir, `2026-06-${day}.library.db.bak`), '');
+    }
+
+    backupCacheDbIfNewDay(backupDir, new Date(2026, 5, 22, 12, 0, 0));
+
+    const backups = readdirSync(backupDir)
+      .filter((e) => e.endsWith('.library.db.bak'))
+      .sort();
+    // 7 retained (the 7 newest) + the 4 oldest (06-01..06-04) get deleted.
+    expect(backups).toHaveLength(7);
+    expect(backups).toEqual([
+      '2026-06-05.library.db.bak',
+      '2026-06-06.library.db.bak',
+      '2026-06-07.library.db.bak',
+      '2026-06-08.library.db.bak',
+      '2026-06-09.library.db.bak',
+      '2026-06-10.library.db.bak',
+      '2026-06-22.library.db.bak'
+    ]);
+  });
+});
+
+describe('migrateLegacyCacheDb', () => {
+  // The migration copies from userData/cache.db to <target>/library.db.
+  // userData is mocked via QF_TEST_USER_DATA at the top of this file. The
+  // outer beforeEach opens dir/cache.db in WAL mode, so we close it and
+  // remove the file before each test to give this suite a clean slate.
+  let targetDir: string;
+
+  beforeEach(() => {
+    closeDb();
+    for (const ext of ['', '-wal', '-shm']) {
+      rmSync(join(dir, `cache.db${ext}`), { force: true });
+    }
+    targetDir = mkdtempSync(join(tmpdir(), 'qf-migrate-'));
+  });
+
+  afterEach(() => {
+    rmSync(targetDir, { recursive: true, force: true });
+  });
+
+  function seedLegacyDb(userDataDir: string, content = 'legacy'): void {
+    const db = new Database(join(userDataDir, 'cache.db'));
+    db.exec(`CREATE TABLE legacy_marker (v TEXT); INSERT INTO legacy_marker VALUES ('${content}')`);
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    db.close();
+  }
+
+  function readMarker(dbPath: string, table = 'legacy_marker'): string | null {
+    const db = new Database(dbPath, { readonly: true });
+    const row = db.prepare(`SELECT v FROM ${table} LIMIT 1`).get() as { v: string } | undefined;
+    db.close();
+    return row?.v ?? null;
+  }
+
+  it('copies userData/cache.db to <target>/library.db when target is missing', () => {
+    seedLegacyDb(dir, 'hello-legacy');
+
+    migrateLegacyCacheDb(targetDir);
+
+    const target = join(targetDir, 'library.db');
+    expect(existsSync(target)).toBe(true);
+    expect(readMarker(target)).toBe('hello-legacy');
+  });
+
+  it('is a no-op when the target library.db already exists', () => {
+    seedLegacyDb(dir, 'should-be-ignored');
+    const target = join(targetDir, 'library.db');
+    const fresh = new Database(target);
+    fresh.exec(`CREATE TABLE fresh_marker (v TEXT); INSERT INTO fresh_marker VALUES ('fresh-wins')`);
+    fresh.close();
+
+    migrateLegacyCacheDb(targetDir);
+
+    expect(readMarker(target, 'fresh_marker')).toBe('fresh-wins');
+  });
+
+  it('is a no-op when no legacy cache.db exists', () => {
+    expect(() => migrateLegacyCacheDb(targetDir)).not.toThrow();
+    expect(existsSync(join(targetDir, 'library.db'))).toBe(false);
+  });
+
+  it('leaves the source cache.db untouched', () => {
+    seedLegacyDb(dir, 'preserved');
+    const sourcePath = join(dir, 'cache.db');
+
+    migrateLegacyCacheDb(targetDir);
+
+    expect(existsSync(sourcePath)).toBe(true);
+    expect(readMarker(sourcePath)).toBe('preserved');
+  });
+
+  it('copies WAL/SHM sidecars when present', () => {
+    // Create a legacy db in WAL mode so it produces -wal / -shm sidecars.
+    const db = new Database(join(dir, 'cache.db'));
+    db.pragma('journal_mode = WAL');
+    db.exec(`CREATE TABLE legacy_marker (v TEXT); INSERT INTO legacy_marker VALUES ('with-wal')`);
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    db.close();
+    // Re-introduce sidecar files so the migration has something to copy.
+    writeFileSync(join(dir, 'cache.db-wal'), 'wal-bytes');
+    writeFileSync(join(dir, 'cache.db-shm'), 'shm-bytes');
+
+    migrateLegacyCacheDb(targetDir);
+
+    expect(readMarker(join(targetDir, 'library.db'))).toBe('with-wal');
+    expect(existsSync(join(targetDir, 'library.db-wal'))).toBe(true);
+    expect(existsSync(join(targetDir, 'library.db-shm'))).toBe(true);
   });
 });

@@ -1,19 +1,107 @@
 import Database from 'better-sqlite3';
 import { app } from 'electron';
-import { join } from 'node:path';
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { thumbsDirFor } from './thumbnailer';
 import type { VideoBase, Thumbnail, VideoWithThumbs, SortKey } from '../shared/types';
 
 export type ThumbStatus = 'pending' | 'ok' | 'failed';
 
+const DB_FILENAME = 'library.db';
+const LEGACY_DB_FILENAME = 'cache.db';
+const BACKUP_RETAIN = 7;
+
 let db: Database.Database | null = null;
 let thumbsDirOverride: string | null = null;
 
+export function getDbDir(): string {
+  if (!app.isPackaged) {
+    return join(process.cwd(), 'db');
+  }
+  return app.getPath('userData');
+}
+
+export function getLegacyDbPath(): string {
+  return join(app.getPath('userData'), LEGACY_DB_FILENAME);
+}
+
+// One-shot migration: if the new library.db is absent at the target dir but
+// the legacy cache.db exists at userData, copy it (and WAL/SHM sidecars) into
+// place. Runs once per fresh install of the renamed file. Never deletes the
+// source — the user can clean it up manually after verifying.
+export function migrateLegacyCacheDb(targetDir: string = getDbDir()): void {
+  const target = join(targetDir, DB_FILENAME);
+  if (existsSync(target)) return;
+  const source = getLegacyDbPath();
+  if (!existsSync(source)) return;
+  mkdirSync(targetDir, { recursive: true });
+  copyDatabaseFile(source, target, LEGACY_DB_FILENAME, DB_FILENAME);
+}
+
+function copyDatabaseFile(source: string, target: string, sourceName: string, targetName: string): void {
+  // Checkpoint first so the on-disk main file is self-contained. Without
+  // this, a WAL-mode DB would be copied without the in-flight WAL writes
+  // and the copy would be missing recent data.
+  const checkpoint = new Database(source);
+  try {
+    checkpoint.pragma('wal_checkpoint(TRUNCATE)');
+  } finally {
+    checkpoint.close();
+  }
+  copyFileSync(source, target);
+  for (const sidecar of [`${sourceName}-wal`, `${sourceName}-shm`]) {
+    const src = join(dirname(source), sidecar);
+    if (existsSync(src)) {
+      const ext = sidecar.slice(sourceName.length + 1);
+      copyFileSync(src, join(dirname(target), `${targetName}-${ext}`));
+    }
+  }
+}
+
 export function getDbPath(): string {
-  const dir = app.getPath('userData');
+  const dir = getDbDir();
+  migrateLegacyCacheDb(dir);
   mkdirSync(dir, { recursive: true });
-  return join(dir, 'cache.db');
+  return join(dir, DB_FILENAME);
+}
+
+export function backupCacheDbIfNewDay(dir: string = getDbDir(), now: Date = new Date()): void {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const today = `${y}-${m}-${day}`;
+  const dbPath = join(dir, DB_FILENAME);
+  const todayBackup = join(dir, `${today}.${DB_FILENAME}.bak`);
+
+  if (existsSync(todayBackup)) {
+    pruneBackups(dir);
+    return;
+  }
+  if (!existsSync(dbPath)) {
+    pruneBackups(dir);
+    return;
+  }
+
+  copyDatabaseFile(dbPath, todayBackup, DB_FILENAME, DB_FILENAME);
+
+  pruneBackups(dir);
+}
+
+function pruneBackups(dir: string): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  const backups = entries.filter((e) => e.endsWith(`.${DB_FILENAME}.bak`)).sort().reverse();
+  for (const old of backups.slice(BACKUP_RETAIN)) {
+    try {
+      unlinkSync(join(dir, old));
+    } catch {
+      // best effort
+    }
+  }
 }
 
 export function getThumbsDir(): string {
@@ -28,6 +116,9 @@ export function getThumbsDir(): string {
 export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void {
   if (opts.thumbsDir) thumbsDirOverride = opts.thumbsDir;
   const dbPath = opts.dbPath ?? getDbPath();
+  if (!opts.dbPath) {
+    backupCacheDbIfNewDay(getDbDir());
+  }
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
