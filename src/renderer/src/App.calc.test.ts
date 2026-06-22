@@ -170,6 +170,7 @@ function mkVideo(id: number, mtime_ms: number): VideoWithThumbs {
     thumb_status: 'ok',
     view_count: 0,
     view_time_ms: 0,
+    content_fingerprint: `fp-${id}`,
     tags: [],
     excludedTags: [],
     thumbnails: []

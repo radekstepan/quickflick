@@ -8,6 +8,7 @@ import type { VideoBase, Thumbnail, VideoWithThumbs, SortKey } from '../shared/t
 export type ThumbStatus = 'pending' | 'ok' | 'failed';
 
 let db: Database.Database | null = null;
+let thumbsDirOverride: string | null = null;
 
 export function getDbPath(): string {
   const dir = app.getPath('userData');
@@ -16,6 +17,7 @@ export function getDbPath(): string {
 }
 
 export function getThumbsDir(): string {
+  if (thumbsDirOverride) return thumbsDirOverride;
   // macOS: ~/Library/Caches/QuickFlick (no space in path; conventional cache location).
   // Auto-cleaned by macOS under disk pressure — perfect for regenerable thumbnails.
   const dir = app.getPath('cache' as 'userData');
@@ -23,29 +25,16 @@ export function getThumbsDir(): string {
   return dir;
 }
 
-export function initDb(): void {
-  const dbPath = getDbPath();
+export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void {
+  if (opts.thumbsDir) thumbsDirOverride = opts.thumbsDir;
+  const dbPath = opts.dbPath ?? getDbPath();
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
 
+  // Create non-videos tables (idempotent).
   db.exec(`
-    CREATE TABLE IF NOT EXISTS videos (
-      id          INTEGER PRIMARY KEY,
-      path        TEXT UNIQUE NOT NULL,
-      folder      TEXT NOT NULL,
-      filename    TEXT NOT NULL,
-      size        INTEGER NOT NULL,
-      mtime_ms    INTEGER NOT NULL,
-      duration    REAL,
-      width       INTEGER,
-      height      INTEGER,
-      scanned_at  INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_videos_folder   ON videos(folder);
-    CREATE INDEX IF NOT EXISTS idx_videos_filename ON videos(filename);
-
     CREATE TABLE IF NOT EXISTS thumbnails (
       id          INTEGER PRIMARY KEY,
       video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
@@ -83,6 +72,9 @@ export function initDb(): void {
     );
   `);
 
+  // Bring the videos table to the current schema.
+  ensureVideosSchema();
+
   // Migrate legacy single-library kv entry into library_roots.
   const rootCount = (db.prepare('SELECT COUNT(*) AS c FROM library_roots').get() as { c: number }).c;
   if (rootCount === 0) {
@@ -97,20 +89,92 @@ export function initDb(): void {
       db.prepare("DELETE FROM kv WHERE key = 'library'").run();
     }
   }
+}
 
-  // Add per-video thumb tracking columns if missing.
-  if (!hasColumn(db, 'videos', 'codec')) {
-    db.exec('ALTER TABLE videos ADD COLUMN codec TEXT');
+function ensureVideosSchema(): void {
+  if (!hasTable(db!, 'videos')) {
+    createVideosTable();
+    ensureVideosIndexes();
+    return;
   }
-  if (!hasColumn(db, 'videos', 'thumb_status')) {
-    db.exec("ALTER TABLE videos ADD COLUMN thumb_status TEXT NOT NULL DEFAULT 'pending'");
+  if (hasColumn(db!, 'videos', 'content_fingerprint')) {
+    // Already on the new schema. Make sure indexes exist.
+    ensureVideosIndexes();
+    return;
   }
-  if (!hasColumn(db, 'videos', 'view_count')) {
-    db.exec('ALTER TABLE videos ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0');
+  // Old schema detected. Backfill any columns that older versions of the
+  // app would have added one at a time, then rebuild the table with the
+  // current shape (path no longer UNIQUE, content_fingerprint added).
+  if (!hasColumn(db!, 'videos', 'codec')) {
+    db!.exec('ALTER TABLE videos ADD COLUMN codec TEXT');
   }
-  if (!hasColumn(db, 'videos', 'view_time_ms')) {
-    db.exec('ALTER TABLE videos ADD COLUMN view_time_ms INTEGER NOT NULL DEFAULT 0');
+  if (!hasColumn(db!, 'videos', 'thumb_status')) {
+    db!.exec("ALTER TABLE videos ADD COLUMN thumb_status TEXT NOT NULL DEFAULT 'pending'");
   }
+  if (!hasColumn(db!, 'videos', 'view_count')) {
+    db!.exec('ALTER TABLE videos ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn(db!, 'videos', 'view_time_ms')) {
+    db!.exec('ALTER TABLE videos ADD COLUMN view_time_ms INTEGER NOT NULL DEFAULT 0');
+  }
+
+  db!.pragma('foreign_keys = OFF');
+  const tx = db!.transaction(() => {
+    db!.exec('ALTER TABLE videos RENAME TO videos_old');
+    createVideosTable();
+    db!.exec(`
+      INSERT INTO videos (
+        id, path, folder, filename, size, mtime_ms, duration, width, height,
+        scanned_at, codec, thumb_status, view_count, view_time_ms
+      )
+      SELECT
+        id, path, folder, filename, size, mtime_ms, duration, width, height,
+        scanned_at, codec, thumb_status, view_count, view_time_ms
+      FROM videos_old
+    `);
+    db!.exec('DROP TABLE videos_old');
+  });
+  tx();
+  db!.pragma('foreign_keys = ON');
+  ensureVideosIndexes();
+}
+
+function createVideosTable(): void {
+  db!.exec(`
+    CREATE TABLE videos (
+      id          INTEGER PRIMARY KEY,
+      path        TEXT NOT NULL,
+      folder      TEXT NOT NULL,
+      filename    TEXT NOT NULL,
+      size        INTEGER NOT NULL,
+      mtime_ms    INTEGER NOT NULL,
+      duration    REAL,
+      width       INTEGER,
+      height      INTEGER,
+      scanned_at  INTEGER NOT NULL,
+      codec       TEXT,
+      thumb_status TEXT NOT NULL DEFAULT 'pending',
+      view_count  INTEGER NOT NULL DEFAULT 0,
+      view_time_ms INTEGER NOT NULL DEFAULT 0,
+      content_fingerprint TEXT
+    )
+  `);
+}
+
+function ensureVideosIndexes(): void {
+  db!.exec(`
+    CREATE INDEX IF NOT EXISTS idx_videos_folder   ON videos(folder);
+    CREATE INDEX IF NOT EXISTS idx_videos_filename ON videos(filename);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_videos_fingerprint
+      ON videos(content_fingerprint) WHERE content_fingerprint IS NOT NULL
+  `);
+}
+
+function hasTable(db: Database.Database, name: string): boolean {
+  const row = db
+    .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(name) as { x: number } | undefined;
+  return row !== undefined;
 }
 
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
@@ -180,31 +244,117 @@ export function removeThumbsForPaths(paths: string[]): number {
   return n;
 }
 
-export function upsertVideo(
-  v: Omit<VideoBase, 'id' | 'scanned_at' | 'thumb_status' | 'view_count' | 'view_time_ms'>
+// Insert a brand-new video row. Use this when the scanner encounters content
+// that has never been seen before (no row by path, no row by fingerprint).
+export function insertVideo(
+  v: Omit<VideoBase, 'id' | 'scanned_at' | 'thumb_status' | 'view_count' | 'view_time_ms' | 'content_fingerprint'> & {
+    content_fingerprint: string | null;
+  }
 ): number {
-  const stmt = getDb().prepare(`
-    INSERT INTO videos (path, folder, filename, size, mtime_ms, duration, width, height, codec, scanned_at)
-    VALUES (@path, @folder, @filename, @size, @mtime_ms, @duration, @width, @height, @codec, @scanned_at)
-    ON CONFLICT(path) DO UPDATE SET
-      folder = excluded.folder,
-      filename = excluded.filename,
-      size = excluded.size,
-      mtime_ms = excluded.mtime_ms,
-      duration = excluded.duration,
-      width = excluded.width,
-      height = excluded.height,
-      codec = excluded.codec,
-      scanned_at = excluded.scanned_at,
-      thumb_status = CASE
-        WHEN videos.size != excluded.size
-          OR videos.mtime_ms != excluded.mtime_ms
-        THEN 'pending'
-        ELSE videos.thumb_status
-      END
-    RETURNING id
-  `);
-  const row = stmt.get({ ...v, scanned_at: Date.now() }) as { id: number };
+  const row = getDb()
+    .prepare(`
+      INSERT INTO videos (
+        path, folder, filename, size, mtime_ms, duration, width, height,
+        codec, scanned_at, content_fingerprint
+      )
+      VALUES (
+        @path, @folder, @filename, @size, @mtime_ms, @duration, @width, @height,
+        @codec, @scanned_at, @content_fingerprint
+      )
+      RETURNING id
+    `)
+    .get({ ...v, scanned_at: Date.now() }) as { id: number };
+  return row.id;
+}
+
+// Update the mutable fields of an existing video row (path, folder, filename,
+// size, mtime_ms, scanned_at, content_fingerprint). Preserves view stats,
+// codec, duration, width, height, and thumb_status.
+export function migrateVideoPath(
+  id: number,
+  fields: {
+    path: string;
+    folder: string;
+    filename: string;
+    size: number;
+    mtime_ms: number;
+    content_fingerprint: string | null;
+  }
+): void {
+  getDb()
+    .prepare(`
+      UPDATE videos
+      SET path = @path,
+          folder = @folder,
+          filename = @filename,
+          size = @size,
+          mtime_ms = @mtime_ms,
+          scanned_at = @scanned_at,
+          content_fingerprint = @content_fingerprint
+      WHERE id = @id
+    `)
+    .run({ ...fields, id, scanned_at: Date.now() });
+}
+
+// Refresh only the per-scan metadata (size, mtime, scanned_at) when the same
+// file content is seen again at the same path. Used for "unchanged" rows.
+export function refreshVideoScan(
+  id: number,
+  fields: { size: number; mtime_ms: number }
+): void {
+  getDb()
+    .prepare('UPDATE videos SET size = ?, mtime_ms = ?, scanned_at = ? WHERE id = ?')
+    .run(fields.size, fields.mtime_ms, Date.now(), id);
+}
+
+// Set the content fingerprint on a row that was inserted before this
+// migration, so future scans can recognise the file across paths.
+export function setContentFingerprint(id: number, fingerprint: string | null): void {
+  getDb()
+    .prepare('UPDATE videos SET content_fingerprint = ? WHERE id = ?')
+    .run(fingerprint, id);
+}
+
+// Update probed metadata fields (duration, width, height, codec) without
+// disturbing view stats or thumb_status. Used after ffprobe runs in the
+// scanner.
+export function setProbeMetadata(
+  id: number,
+  fields: { duration: number | null; width: number | null; height: number | null; codec: string | null }
+): void {
+  getDb()
+    .prepare(
+      'UPDATE videos SET duration = ?, width = ?, height = ?, codec = ? WHERE id = ?'
+    )
+    .run(fields.duration, fields.width, fields.height, fields.codec, id);
+}
+
+// Delete a video row and its cascaded thumbnails. The on-disk thumb dir is
+// NOT cleaned up here (callers can do it via removeThumbsForPaths or leave
+// it for macOS cache GC).
+export function deleteVideo(id: number): void {
+  getDb().prepare('DELETE FROM videos WHERE id = ?').run(id);
+}
+
+// Legacy upsert kept for any caller that doesn't have a fingerprint handy.
+// Path is no longer UNIQUE in the schema, so this is a plain INSERT (caller
+// is responsible for routing to insertVideo / migrateVideoPath as appropriate).
+export function upsertVideo(
+  v: Omit<VideoBase, 'id' | 'scanned_at' | 'thumb_status' | 'view_count' | 'view_time_ms' | 'content_fingerprint'> & {
+    content_fingerprint?: string | null;
+  }
+): number {
+  const row = getDb()
+    .prepare(`
+      INSERT INTO videos (path, folder, filename, size, mtime_ms, duration, width, height, codec, scanned_at, content_fingerprint)
+      VALUES (@path, @folder, @filename, @size, @mtime_ms, @duration, @width, @height, @codec, @scanned_at, @content_fingerprint)
+      RETURNING id
+    `)
+    .get({
+      ...v,
+      content_fingerprint: v.content_fingerprint ?? null,
+      scanned_at: Date.now()
+    }) as { id: number };
   return row.id;
 }
 
@@ -272,6 +422,13 @@ export function getVideoByPath(path: string): VideoBase | null {
   const row = getDb()
     .prepare('SELECT * FROM videos WHERE path = ?')
     .get(path) as VideoBase | undefined;
+  return row ?? null;
+}
+
+export function getVideoByFingerprint(fingerprint: string): VideoBase | null {
+  const row = getDb()
+    .prepare('SELECT * FROM videos WHERE content_fingerprint = ?')
+    .get(fingerprint) as VideoBase | undefined;
   return row ?? null;
 }
 
@@ -487,9 +644,7 @@ export function setVideoExclusion(videoId: number, tagName: string): void {
 }
 
 export function removeVideoExclusion(videoId: number, tagName: string): void {
-  getDb()
-    .prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ?')
-    .run(videoId, tagName);
+  getDb().prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ?').run(videoId, tagName);
 }
 
 export function getTagsForVideo(videoId: number): string[] {

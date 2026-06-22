@@ -6,14 +6,21 @@ import {
   listAllVideos,
   markThumbStatus,
   removeStaleVideos,
-  upsertVideo,
+  insertVideo,
+  migrateVideoPath,
+  refreshVideoScan,
+  deleteVideo,
+  setContentFingerprint,
+  setProbeMetadata,
   getVideoByPath,
+  getVideoById,
   getVideoWithRelations,
   getThumbsDir,
   getThumbsForVideo
 } from './db';
 import { probeVideo } from './probe';
 import { generateThumbnails, thumbUrl, cacheBustThumbUrl, frameCount } from './thumbnailer';
+import { computeFingerprint } from './hasher';
 import { Queue } from './queue';
 import type {
   ScanProgress,
@@ -68,6 +75,26 @@ async function walk(root: string, onFile: (abs: string) => Promise<void>, onProg
   return count;
 }
 
+interface FoundMeta {
+  size: number;
+  mtime_ms: number;
+  folder: string;
+  filename: string;
+}
+
+interface ReconcileOutcome {
+  id: number;
+  fingerprint: string | null;
+  needsThumb: boolean;
+  // For UI bookkeeping: was this a brand-new row, a move, a refresh, or a
+  // stale-and-replace? "skipped" means a duplicate of an already-handled
+  // fingerprint (e.g. the user has the same content in two library roots).
+  kind: 'added' | 'moved' | 'refreshed' | 'replaced' | 'skipped';
+  // Filesystem path that was the source for this outcome — used for
+  // progress reporting and discovered/thumbed callbacks.
+  path: string;
+}
+
 export async function scanLibrary(
   progress: ProgressFn,
   onVideosDiscovered: (rows: VideoWithThumbs[]) => void = () => {},
@@ -90,7 +117,7 @@ export async function scanLibrary(
 
   progress({ phase: 'walking', processed: 0, total: 0 });
 
-  const found = new Map<string, { size: number; mtime_ms: number; folder: string; filename: string }>();
+  const found = new Map<string, FoundMeta>();
   let walked = 0;
   for (const realRoot of realRoots) {
     await walk(realRoot, async (abs) => {
@@ -116,13 +143,17 @@ export async function scanLibrary(
   const total = found.size;
   progress({ phase: 'walking', processed: walked, total });
 
-  // Reconcile DB
   const validPaths = new Set(found.keys());
-  const removed = removeStaleVideos(validPaths);
 
-  // Upsert all + collect (id, path) for thumbnail work
-  const existing = new Map<string, VideoBase>();
-  for (const v of listAllVideos()) existing.set(v.path, v);
+  // Build in-memory indexes of the current DB state. We mutate the
+  // fingerprint index lazily as we backfill NULL fingerprints during
+  // the reconcile pass.
+  const byPath = new Map<string, VideoBase>();
+  const byFingerprint = new Map<string, VideoBase>();
+  for (const v of listAllVideos()) {
+    byPath.set(v.path, v);
+    if (v.content_fingerprint) byFingerprint.set(v.content_fingerprint, v);
+  }
 
   let added = 0;
   let updated = 0;
@@ -131,74 +162,41 @@ export async function scanLibrary(
   let processed = 0;
   const thumbsDir = getThumbsDir();
   const failedThumbnails: ThumbnailFailure[] = [];
-  let missingThumbs = 0;
-
   const discovered: VideoWithThumbs[] = [];
+  const outcomes: ReconcileOutcome[] = [];
 
   for (const [path, meta] of found) {
-    const prev = existing.get(path);
-    const fileChanged =
-      !prev ||
-      prev.size !== meta.size ||
-      prev.mtime_ms !== meta.mtime_ms ||
-      prev.duration == null;
-
-    let thumbMissing = false;
-    if (prev) {
-      const thumbs = getThumbsForVideo(prev.id);
-      if (thumbs.length < frameCount()) {
-        thumbMissing = true;
-      } else {
-        for (const t of thumbs) {
-          try {
-            await access(t.file_path);
-          } catch {
-            thumbMissing = true;
-            break;
-          }
-        }
-      }
-    }
-    if (thumbMissing) missingThumbs++;
-
-    const needsThumb =
-      fileChanged ||
-      prev?.thumb_status === 'pending' ||
-      prev?.thumb_status === 'failed' ||
-      thumbMissing;
-
-    const id = upsertVideo({
+    const outcome = await _reconcile({
       path,
-      folder: meta.folder,
-      filename: meta.filename,
-      size: meta.size,
-      mtime_ms: meta.mtime_ms,
-      duration: prev?.duration ?? null,
-      width: prev?.width ?? null,
-      height: prev?.height ?? null,
-      codec: prev?.codec ?? null
+      meta,
+      byPath,
+      byFingerprint
     });
+    outcomes.push(outcome);
 
-    if (!prev) added++;
-    else if (fileChanged) updated++;
+    if (outcome.kind === 'added') added++;
+    else if (outcome.kind === 'moved' || outcome.kind === 'replaced') updated++;
 
-    if (needsThumb) {
+    if (outcome.needsThumb) {
       enqueued++;
-      const inserted = getVideoWithRelations(id);
+      const inserted = getVideoWithRelations(outcome.id);
       if (inserted) {
         discovered.push(inserted);
       }
+      const fingerprint = outcome.fingerprint;
+      const id = outcome.id;
+      const filePath = path;
       void thumbQueue.add(async () => {
         processed++;
         let thumbOk = false;
         let probedCodec: string | null = null;
         let probedTag: string | null = null;
         try {
-          const probe = await probeVideo(path);
+          const probe = await probeVideo(filePath);
           if (!probe.hasVideo) {
             markThumbStatus(id, 'failed');
             failedThumbnails.push({
-              path,
+              path: filePath,
               codec: probe.codecName,
               codecTag: probe.codecTag,
               decodersTried: [],
@@ -209,24 +207,20 @@ export async function scanLibrary(
           }
           probedCodec = probe.codecName;
           probedTag = probe.codecTag;
-          const v = getVideoByPath(path);
-          if (v) {
-            upsertVideo({
-              path: v.path,
-              folder: v.folder,
-              filename: v.filename,
-              size: v.size,
-              mtime_ms: v.mtime_ms,
-              duration: probe.duration,
-              width: probe.width,
-              height: probe.height,
-              codec: probe.codecName
-            });
-          }
+          setProbeMetadata(id, {
+            duration: probe.duration,
+            width: probe.width,
+            height: probe.height,
+            codec: probe.codecName
+          });
           const safeDuration = probe.duration && probe.duration > 0 ? probe.duration : 60;
+          if (!fingerprint) {
+            throw new Error('cannot generate thumbnails without a content fingerprint');
+          }
           await generateThumbnails(
             id,
-            path,
+            fingerprint,
+            filePath,
             safeDuration,
             probedCodec,
             probedTag,
@@ -235,7 +229,7 @@ export async function scanLibrary(
                 phase: 'thumbnailing',
                 processed,
                 total: enqueued,
-                currentFile: path,
+                currentFile: filePath,
                 queueDepth: thumbQueue.pending
               });
             }
@@ -244,7 +238,7 @@ export async function scanLibrary(
           thumbOk = true;
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          console.error('[thumbnail] failed for', path, message);
+          console.error('[thumbnail] failed for', filePath, message);
           markThumbStatus(id, 'failed');
           const attempts =
             (e as Error & { attempts?: { label: string; error: string }[] }).attempts ?? [];
@@ -252,7 +246,7 @@ export async function scanLibrary(
             ? attempts.map((a) => a.label)
             : extractDecodersTried(message);
           failedThumbnails.push({
-            path,
+            path: filePath,
             codec: probedCodec,
             codecTag: probedTag,
             decodersTried,
@@ -264,7 +258,7 @@ export async function scanLibrary(
           phase: 'thumbnailing',
           processed,
           total: enqueued,
-          currentFile: path,
+          currentFile: filePath,
           queueDepth: thumbQueue.pending
         });
         if (thumbOk) {
@@ -281,12 +275,19 @@ export async function scanLibrary(
     }
   }
 
+  // RemoveStale runs AFTER reconcile: by then, any row whose content is
+  // still on disk has either been refreshed in place or migrated to its
+  // current path. Rows whose path is not in `validPaths` are genuinely
+  // orphaned.
+  const removed = removeStaleVideos(validPaths);
+
   if (discovered.length > 0) {
     onVideosDiscovered(discovered);
   }
 
+  const missingThumbs = outcomes.filter((o) => o.needsThumb).length;
   if (missingThumbs > 0) {
-    console.log(`[scan] detected ${missingThumbs} video(s) with missing thumbnails, regenerating`);
+    console.log(`[scan] ${missingThumbs} video(s) queued for thumbnailing`);
   }
 
   await thumbQueue.drain();
@@ -295,6 +296,159 @@ export async function scanLibrary(
 
   const totalVideos = found.size;
   return { added, updated, removed, total: totalVideos, failedThumbnails };
+}
+
+interface ReconcileInput {
+  path: string;
+  meta: FoundMeta;
+  byPath: Map<string, VideoBase>;
+  byFingerprint: Map<string, VideoBase>;
+}
+
+export type { ReconcileInput };
+
+// Reconcile a single found file against the DB. Returns the row id to use
+// for subsequent thumbnail work and bookkeeping. Mutates byPath/byFingerprint
+// in place as it backfills NULL fingerprints.
+//
+// Exported (with a `_` prefix) so tests can exercise the per-file logic
+// without spinning up ffmpeg/ffprobe.
+export async function _reconcile(input: ReconcileInput): Promise<ReconcileOutcome> {
+  const { path, meta, byPath, byFingerprint } = input;
+  let prev = byPath.get(path);
+
+  // Compute the content fingerprint. Fast path: if a row already exists
+  // at this path with matching size+mtime and a non-null fingerprint,
+  // reuse it. Otherwise compute fresh.
+  let fingerprint: string | null = null;
+  if (
+    prev &&
+    prev.size === meta.size &&
+    prev.mtime_ms === meta.mtime_ms &&
+    prev.content_fingerprint
+  ) {
+    fingerprint = prev.content_fingerprint;
+  } else {
+    fingerprint = await computeFingerprint(path, meta.size);
+    if (!fingerprint) {
+      fingerprint = null;
+    }
+  }
+
+  // Backfill a NULL fingerprint on a pre-migration row. Done unconditionally
+  // (regardless of size/mtime match) so the user keeps their view stats,
+  // tags, and thumbs even if the file's mtime drifted (clock change, copy
+  // from a backup, etc.). Guarded so we never overwrite another row's
+  // fingerprint — if a different row already owns this fingerprint, the
+  // move branch below will migrate that row here and drop the
+  // pre-migration row.
+  if (prev && prev.content_fingerprint == null && fingerprint) {
+    if (!byFingerprint.has(fingerprint)) {
+      setContentFingerprint(prev.id, fingerprint);
+      prev = { ...prev, content_fingerprint: fingerprint };
+      byFingerprint.set(fingerprint, prev);
+    }
+  }
+
+  const byFp = fingerprint ? byFingerprint.get(fingerprint) : undefined;
+
+  // Branch 1: refresh — same row, same path, same content.
+  if (prev && byFp && prev.id === byFp.id) {
+    refreshVideoScan(prev.id, { size: meta.size, mtime_ms: meta.mtime_ms });
+    return {
+      id: prev.id,
+      fingerprint,
+      needsThumb: await needsThumbWork(prev.id),
+      kind: 'refreshed',
+      path
+    };
+  }
+
+  // Branch 2: move — same content lives at a different row/path. Migrate
+  // the existing row here. If `prev` exists at the new path with a
+  // different fingerprint, it's a stale pre-migration row that we drop.
+  if (byFp) {
+    if (prev && prev.id !== byFp.id) {
+      deleteVideo(prev.id);
+    }
+    migrateVideoPath(byFp.id, {
+      path,
+      folder: meta.folder,
+      filename: meta.filename,
+      size: meta.size,
+      mtime_ms: meta.mtime_ms,
+      content_fingerprint: fingerprint
+    });
+    // Reflect the migration in the in-memory indexes.
+    byPath.delete(path);
+    byPath.set(path, { ...byFp, path, folder: meta.folder, filename: meta.filename });
+    // Note: byFingerprint doesn't need updating — the fingerprint key is
+    // unchanged.
+    return {
+      id: byFp.id,
+      fingerprint,
+      needsThumb: await needsThumbWork(byFp.id),
+      kind: 'moved',
+      path
+    };
+  }
+
+  // Branch 3: stale-and-replace — a row exists at this path but its
+  // content (fingerprint) is gone (or was never set and the file is
+  // now genuinely new). Drop the old row, insert fresh.
+  if (prev) {
+    deleteVideo(prev.id);
+    byPath.delete(path);
+    if (prev.content_fingerprint) byFingerprint.delete(prev.content_fingerprint);
+    const id = insertVideo({
+      path,
+      folder: meta.folder,
+      filename: meta.filename,
+      size: meta.size,
+      mtime_ms: meta.mtime_ms,
+      duration: null,
+      width: null,
+      height: null,
+      codec: null,
+      content_fingerprint: fingerprint
+    });
+    const inserted = getVideoByPath(path);
+    if (inserted && fingerprint) byFingerprint.set(fingerprint, inserted);
+    return { id, fingerprint, needsThumb: true, kind: 'replaced', path };
+  }
+
+  // Branch 4: brand-new content. Insert.
+  const id = insertVideo({
+    path,
+    folder: meta.folder,
+    filename: meta.filename,
+    size: meta.size,
+    mtime_ms: meta.mtime_ms,
+    duration: null,
+    width: null,
+    height: null,
+    codec: null,
+    content_fingerprint: fingerprint
+  });
+  const inserted = getVideoByPath(path);
+  if (inserted && fingerprint) byFingerprint.set(fingerprint, inserted);
+  return { id, fingerprint, needsThumb: true, kind: 'added', path };
+}
+
+async function needsThumbWork(id: number): Promise<boolean> {
+  const v = getVideoById(id);
+  if (!v) return true;
+  if (v.thumb_status === 'pending' || v.thumb_status === 'failed') return true;
+  const thumbs = getThumbsForVideo(id);
+  if (thumbs.length < frameCount()) return true;
+  for (const t of thumbs) {
+    try {
+      await access(t.file_path);
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function pickInitialFolder(): Promise<string | null> {

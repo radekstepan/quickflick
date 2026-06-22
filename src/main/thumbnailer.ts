@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { mkdir, rm, readdir } from 'node:fs/promises';
+import { mkdir, rm, readdir, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import ffmpeg from 'fluent-ffmpeg';
 import { getThumbsDir, insertThumbnails, deleteThumbnailsForVideo } from './db';
@@ -11,12 +10,23 @@ const TARGET_WIDTH = 320;
 const TIMEOUT_MS = 60_000;
 const DIAGNOSTIC_LOG_TAIL = 2000;
 
-function hashPath(p: string): string {
-  return createHash('sha1').update(p).digest('hex').slice(0, 16);
+// Path-keyed thumb dir kept for the legacy removeThumbsForPaths cleanup
+// helper (it still receives old file paths from removeVideosByRoot).
+function legacyThumbsDirFor(videoPath: string): string {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createHash } = require('node:crypto') as typeof import('node:crypto');
+  const h = createHash('sha1').update(videoPath).digest('hex').slice(0, 16);
+  return join(getThumbsDir(), h);
 }
 
-export function thumbsDirFor(videoPath: string): string {
-  return join(getThumbsDir(), hashPath(videoPath));
+export function thumbsDirFor(videoPathOrFingerprint: string): string {
+  // Heuristic: fingerprint is a 40-char hex; legacy path-hash is 16-char hex.
+  // If the input looks like a fingerprint, key the dir on it. Otherwise treat
+  // it as a path and apply the legacy hash.
+  if (/^[0-9a-f]{40}$/.test(videoPathOrFingerprint)) {
+    return join(getThumbsDir(), videoPathOrFingerprint);
+  }
+  return legacyThumbsDirFor(videoPathOrFingerprint);
 }
 
 export interface ExtractOptions {
@@ -258,20 +268,65 @@ async function diagnosticRerun(
   );
 }
 
+async function existingThumbsValid(outDir: string): Promise<boolean> {
+  try {
+    const files = await readdir(outDir);
+    if (files.length < FRAME_COUNT) return false;
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      const expected = `thumb_${String(i + 1).padStart(3, '0')}.jpg`;
+      if (!files.includes(expected)) return false;
+      const s = await stat(join(outDir, expected));
+      if (!s.isFile() || s.size <= 0) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureThumbnailRows(
+  videoId: number,
+  outDir: string,
+  interval: number
+): Promise<void> {
+  const files = await readdir(outDir);
+  const sorted = files
+    .filter((f) => f.endsWith('.jpg'))
+    .sort();
+  if (sorted.length === 0) return;
+  const rows: Omit<Thumbnail, 'id'>[] = sorted.slice(0, FRAME_COUNT).map((f, idx) => ({
+    video_id: videoId,
+    frame_index: idx,
+    time_offset: idx * interval,
+    file_path: join(outDir, f)
+  }));
+  insertThumbnails(rows);
+}
+
 export async function generateThumbnails(
   videoId: number,
+  fingerprint: string,
   videoPath: string,
   durationSec: number,
   codec: string | null,
   codecTag: string | null,
   onProgress?: (i: number) => void
 ): Promise<void> {
-  const outDir = thumbsDirFor(videoPath);
+  const outDir = thumbsDirFor(fingerprint);
+  const interval = Math.max(durationSec / FRAME_COUNT, 0.05);
+
+  // Short-circuit: if the fingerprint's thumb dir already holds 8 valid
+  // files, reuse them. This is the post-move case — the same content lived
+  // somewhere else and its thumbs are already on disk.
+  if (await existingThumbsValid(outDir)) {
+    await ensureThumbnailRows(videoId, outDir, interval);
+    onProgress?.(FRAME_COUNT);
+    return;
+  }
+
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
   deleteThumbnailsForVideo(videoId);
-
-  const interval = Math.max(durationSec / FRAME_COUNT, 0.05);
 
   const family = codecFamily(codec, codecTag);
   const candidates = buildCandidates(videoPath, family, interval, outDir, durationSec);

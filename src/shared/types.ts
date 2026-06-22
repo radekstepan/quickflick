@@ -16,6 +16,7 @@ export interface VideoBase {
   thumb_status: ThumbStatus;
   view_count: number;
   view_time_ms: number;
+  content_fingerprint: string | null;
 }
 
 export interface Video extends VideoBase {
