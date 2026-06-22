@@ -79,3 +79,61 @@ if (!existsSync(binary)) {
 }
 const size = statSync(binary).size;
 console.log(`[rebuild-native] OK: ${binary} (${size} bytes)`);
+
+// 5) Verify the binary actually loads under the target Electron Node ABI.
+//    prebuild-install targets a specific ABI; a wrong one (or a stale build
+//    done with the system node) silently produces a binary that crashes at
+//    load with "NODE_MODULE_VERSION mismatch". Catch that here.
+function findElectronBinary(electronPkgDir) {
+  const candidates = [
+    // macOS .app bundle
+    join(electronPkgDir, 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron'),
+    // Linux
+    join(electronPkgDir, 'dist', 'electron'),
+    // Windows
+    join(electronPkgDir, 'dist', 'electron.exe'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
+}
+
+const electronBin = findElectronBinary(electronDir);
+if (!electronBin) {
+  console.warn(`[rebuild-native] could not locate electron binary in ${electronDir}; skipping ABI verification`);
+} else {
+  const abiProbe = spawnSync(electronBin, ['-p', 'process.versions.modules'], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    encoding: 'utf8',
+  });
+  if (abiProbe.status !== 0) {
+    console.error('[rebuild-native] failed to probe electron ABI:');
+    console.error(abiProbe.stderr);
+    process.exit(abiProbe.status ?? 1);
+  }
+  const expectedAbi = abiProbe.stdout.trim();
+  console.log(`[rebuild-native] electron@${electronVersion} expects NODE_MODULE_VERSION ${expectedAbi}`);
+
+  if (process.env.SKIP_ABI_CHECK === '1') {
+    console.warn('[rebuild-native] SKIP_ABI_CHECK=1, skipping load verification');
+  } else {
+    const loadProbe = spawnSync(
+      electronBin,
+      ['-e', `require(${JSON.stringify(binary)}); console.log('loaded OK')`],
+      {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        encoding: 'utf8',
+      }
+    );
+    if (loadProbe.status !== 0) {
+      console.error(
+        `[rebuild-native] ABI mismatch: ${binary} does not load under electron@${electronVersion}\n` +
+        `[rebuild-native] expected NODE_MODULE_VERSION ${expectedAbi}, got load error:\n` +
+        loadProbe.stderr
+      );
+      process.exit(loadProbe.status ?? 1);
+    }
+    console.log(`[rebuild-native] ABI verified: ${binary} loads under electron@${electronVersion} (NODE_MODULE_VERSION ${expectedAbi})`);
+  }
+}

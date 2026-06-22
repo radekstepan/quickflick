@@ -6,6 +6,7 @@
   "productName": "QuickFlick",
   "author": "Radek Stepan",
   "scripts": {
+    "preinstall": "node scripts/check-node.cjs",
     "predev": "node scripts/rebuild-native.cjs",
     "dev": "QFKILL_PARENT=1 electron-vite dev",
     "prebuild": "node scripts/rebuild-native.cjs",
