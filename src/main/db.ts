@@ -14,6 +14,48 @@ const BACKUP_RETAIN = 7;
 let db: Database.Database | null = null;
 let thumbsDirOverride: string | null = null;
 
+// Tables that reference `videos(id)`. Their DDL is shared between the
+// idempotent create in `initDb`, the in-place rebuild done by the videos
+// migration, and the self-heal path for DBs left with FKs pointing at the
+// dropped `videos_old` name. All DDL is written with `IF NOT EXISTS` so it
+// can be replayed in any of those contexts: the index name is shared with
+// the old (renamed) table during migration, so we must not assert
+// uniqueness.
+const SUPPORTING_TABLE_SCHEMAS: Array<{ name: string; ddl: string; indexes: string[] }> = [
+  {
+    name: 'thumbnails',
+    ddl: `CREATE TABLE IF NOT EXISTS thumbnails (
+      id          INTEGER PRIMARY KEY,
+      video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      frame_index INTEGER NOT NULL,
+      time_offset REAL    NOT NULL,
+      file_path   TEXT    NOT NULL,
+      UNIQUE(video_id, frame_index)
+    )`,
+    indexes: ['CREATE INDEX IF NOT EXISTS idx_thumbnails_video ON thumbnails(video_id)']
+  },
+  {
+    name: 'video_tags',
+    ddl: `CREATE TABLE IF NOT EXISTS video_tags (
+      video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      tag_name   TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (video_id, tag_name)
+    )`,
+    indexes: ['CREATE INDEX IF NOT EXISTS idx_video_tags_name ON video_tags(tag_name)']
+  },
+  {
+    name: 'video_excluded_tags',
+    ddl: `CREATE TABLE IF NOT EXISTS video_excluded_tags (
+      video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      tag_name   TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (video_id, tag_name)
+    )`,
+    indexes: ['CREATE INDEX IF NOT EXISTS idx_video_excluded_tags_name ON video_excluded_tags(tag_name)']
+  }
+];
+
 export function getDbDir(): string {
   if (!app.isPackaged) {
     return join(process.cwd(), 'db');
@@ -125,37 +167,15 @@ export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void
   db.pragma('foreign_keys = ON');
 
   // Create non-videos tables (idempotent).
+  for (const t of SUPPORTING_TABLE_SCHEMAS) {
+    db.exec(t.ddl);
+    for (const idx of t.indexes) db.exec(idx);
+  }
   db.exec(`
-    CREATE TABLE IF NOT EXISTS thumbnails (
-      id          INTEGER PRIMARY KEY,
-      video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
-      frame_index INTEGER NOT NULL,
-      time_offset REAL    NOT NULL,
-      file_path   TEXT    NOT NULL,
-      UNIQUE(video_id, frame_index)
-    );
-    CREATE INDEX IF NOT EXISTS idx_thumbnails_video ON thumbnails(video_id);
-
     CREATE TABLE IF NOT EXISTS library_roots (
       path     TEXT PRIMARY KEY,
       added_at INTEGER NOT NULL
     );
-
-    CREATE TABLE IF NOT EXISTS video_tags (
-      video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
-      tag_name   TEXT    NOT NULL,
-      created_at INTEGER NOT NULL,
-      PRIMARY KEY (video_id, tag_name)
-    );
-    CREATE INDEX IF NOT EXISTS idx_video_tags_name ON video_tags(tag_name);
-
-    CREATE TABLE IF NOT EXISTS video_excluded_tags (
-      video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
-      tag_name   TEXT    NOT NULL,
-      created_at INTEGER NOT NULL,
-      PRIMARY KEY (video_id, tag_name)
-    );
-    CREATE INDEX IF NOT EXISTS idx_video_excluded_tags_name ON video_excluded_tags(tag_name);
 
     CREATE TABLE IF NOT EXISTS kv (
       key   TEXT PRIMARY KEY,
@@ -165,6 +185,14 @@ export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void
 
   // Bring the videos table to the current schema.
   ensureVideosSchema();
+
+  // Heal a DB where the supporting tables' FKs were auto-rewritten by SQLite
+  // to point at `videos_old` (a known footgun of `ALTER TABLE ... RENAME` on a
+  // referenced table). The old migration left these pointing at a table that
+  // no longer exists; with `foreign_keys = ON`, every INSERT fails with
+  // "no such table: main.videos_old". This recreates each affected table
+  // with FKs targeting the real `videos` table, preserving all rows.
+  repairSupportingTablesIfNeeded();
 
   // Migrate legacy single-library kv entry into library_roots.
   const rootCount = (db.prepare('SELECT COUNT(*) AS c FROM library_roots').get() as { c: number }).c;
@@ -211,6 +239,17 @@ function ensureVideosSchema(): void {
 
   db!.pragma('foreign_keys = OFF');
   const tx = db!.transaction(() => {
+    // Move the supporting tables out of the way first. If we renamed `videos`
+    // while they still had FKs to it, SQLite would auto-rewrite their FKs to
+    // the temporary `videos_old` name, leaving the recreated `videos` table
+    // un-referenced. By renaming them first, we keep the FKs untouched (the
+    // rename is on the supporting table itself, not on `videos`), and the
+    // copies below re-target them at the new `videos` table.
+    for (const t of SUPPORTING_TABLE_SCHEMAS) {
+      if (hasTable(db!, t.name)) {
+        db!.exec(`ALTER TABLE ${t.name} RENAME TO ${t.name}_old`);
+      }
+    }
     db!.exec('ALTER TABLE videos RENAME TO videos_old');
     createVideosTable();
     db!.exec(`
@@ -224,10 +263,46 @@ function ensureVideosSchema(): void {
       FROM videos_old
     `);
     db!.exec('DROP TABLE videos_old');
+    for (const t of SUPPORTING_TABLE_SCHEMAS) {
+      if (!hasTable(db!, `${t.name}_old`)) continue;
+      db!.exec(t.ddl);
+      db!.exec(`INSERT INTO ${t.name} SELECT * FROM ${t.name}_old`);
+      for (const idx of t.indexes) db!.exec(idx);
+      db!.exec(`DROP TABLE ${t.name}_old`);
+    }
   });
   tx();
   db!.pragma('foreign_keys = ON');
   ensureVideosIndexes();
+}
+
+// Returns true if any FK on `table` points to a table other than `videos`.
+// Used to detect a DB left in the broken post-migration state where SQLite
+// auto-rewrote the supporting tables' FKs to point at the dropped
+// `videos_old` (the old name used during the videos table rebuild).
+function hasDanglingFks(d: Database.Database, table: string): boolean {
+  const rows = d.prepare(`PRAGMA foreign_key_list(${table})`).all() as { table: string }[];
+  return rows.some((r) => r.table !== 'videos');
+}
+
+// Heal any supporting table whose FKs no longer reference `videos`. Renames
+// the broken table out of the way, recreates it with the canonical DDL (FKs
+// pointing at the real `videos`), copies all rows back, and re-creates the
+// index. Idempotent: a no-op when nothing is broken.
+function repairSupportingTablesIfNeeded(): void {
+  for (const t of SUPPORTING_TABLE_SCHEMAS) {
+    if (!hasTable(db!, t.name)) continue;
+    if (!hasDanglingFks(db!, t.name)) continue;
+    const tmp = `${t.name}_old`;
+    const tx = db!.transaction(() => {
+      db!.exec(`ALTER TABLE ${t.name} RENAME TO ${tmp}`);
+      db!.exec(t.ddl);
+      db!.exec(`INSERT INTO ${t.name} SELECT * FROM ${tmp}`);
+      for (const idx of t.indexes) db!.exec(idx);
+      db!.exec(`DROP TABLE ${tmp}`);
+    });
+    tx();
+  }
 }
 
 function createVideosTable(): void {

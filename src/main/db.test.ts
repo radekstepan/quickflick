@@ -367,6 +367,197 @@ describe('schema migration', () => {
     expect(v.thumb_status).toBe('pending');
     expect(v.content_fingerprint).toBeNull();
   });
+
+  it('rebuilds supporting tables when migrating an old DB that has them', () => {
+    // Simulate a pre-migration DB that already has supporting tables with FKs
+    // to `videos`. After initDb, the FKs must still point at `videos` (not
+    // `videos_old` or anything else), and the data must survive.
+    closeDb();
+    const oldPath = join(dir, 'cache.db');
+    rmSync(oldPath, { force: true });
+    const oldDb = new Database(oldPath);
+    oldDb.exec(`
+      CREATE TABLE videos (
+        id INTEGER PRIMARY KEY,
+        path TEXT UNIQUE NOT NULL,
+        folder TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ms INTEGER NOT NULL,
+        duration REAL,
+        width INTEGER,
+        height INTEGER,
+        scanned_at INTEGER NOT NULL
+      );
+      INSERT INTO videos (id, path, folder, filename, size, mtime_ms, scanned_at)
+      VALUES (1, '/old/a.mp4', '/old', 'a.mp4', 100, 1, 2);
+
+      CREATE TABLE thumbnails (
+        id          INTEGER PRIMARY KEY,
+        video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        frame_index INTEGER NOT NULL,
+        time_offset REAL    NOT NULL,
+        file_path   TEXT    NOT NULL,
+        UNIQUE(video_id, frame_index)
+      );
+      INSERT INTO thumbnails (video_id, frame_index, time_offset, file_path)
+      VALUES (1, 0, 0.0, '/thumbs/1/0.jpg'), (1, 1, 1.0, '/thumbs/1/1.jpg');
+
+      CREATE TABLE video_tags (
+        video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        tag_name   TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (video_id, tag_name)
+      );
+      INSERT INTO video_tags VALUES (1, 'favorite', 1000);
+
+      CREATE TABLE video_excluded_tags (
+        video_id   INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        tag_name   TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (video_id, tag_name)
+      );
+      INSERT INTO video_excluded_tags VALUES (1, 'skip', 1000);
+    `);
+    oldDb.close();
+
+    initDb({ dbPath: oldPath, thumbsDir: join(dir, 'thumbs') });
+
+    // Videos data preserved.
+    const v = getVideoByPath('/old/a.mp4')!;
+    expect(v.id).toBe(1);
+    expect(v.content_fingerprint).toBeNull();
+
+    // Supporting-table rows preserved across the migration.
+    expect(getThumbsForVideo(1)).toHaveLength(2);
+
+    // FKs all point at `videos`, not `videos_old` or anything else.
+    for (const table of ['thumbnails', 'video_tags', 'video_excluded_tags']) {
+      const fks = (new Database(oldPath, { readonly: true }))
+        .prepare(`PRAGMA foreign_key_list(${table})`)
+        .all() as { table: string }[];
+      expect(fks.length).toBeGreaterThan(0);
+      for (const fk of fks) expect(fk.table).toBe('videos');
+    }
+
+    // No FK violations anywhere in the DB.
+    const checker = new Database(oldPath, { readonly: true });
+    checker.pragma('foreign_keys = ON');
+    expect(checker.pragma('foreign_key_check') as unknown[]).toEqual([]);
+
+    // A subsequent thumbnail insert must succeed (this is the exact failure
+    // the bug presented as: "no such table: main.videos_old").
+    insertThumbnails([
+      { video_id: 1, frame_index: 7, time_offset: 7, file_path: '/thumbs/1/7.jpg' }
+    ]);
+    expect(getThumbsForVideo(1)).toHaveLength(3);
+  });
+
+  it('heals a DB where supporting tables reference a dropped `videos_old`', () => {
+    // Simulate a DB left in the broken post-migration state: the videos table
+    // is on the new schema, but SQLite auto-rewrote the supporting tables'
+    // FKs to point at the (now-dropped) `videos_old` name. The self-heal
+    // path inside initDb must rebuild them with FKs to `videos`.
+    closeDb();
+    const brokenPath = join(dir, 'cache.db');
+    rmSync(brokenPath, { force: true });
+    const brokenDb = new Database(brokenPath);
+    // The real broken state has FKs pointing at a non-existent `videos_old`,
+    // so FK enforcement is effectively a no-op (no rows can satisfy the
+    // dangling references anyway). Mirror that here: turn FK enforcement
+    // off for the seeding pass so the supporting-table inserts and the
+    // DROP TABLE `videos_old` don't cascade-delete our data.
+    brokenDb.pragma('foreign_keys = OFF');
+    brokenDb.exec(`
+      CREATE TABLE videos_old (
+        id INTEGER PRIMARY KEY
+      );
+      INSERT INTO videos_old VALUES (1);
+
+      CREATE TABLE videos (
+        id          INTEGER PRIMARY KEY,
+        path        TEXT NOT NULL,
+        folder      TEXT NOT NULL,
+        filename    TEXT NOT NULL,
+        size        INTEGER NOT NULL,
+        mtime_ms    INTEGER NOT NULL,
+        duration    REAL,
+        width       INTEGER,
+        height      INTEGER,
+        scanned_at  INTEGER NOT NULL,
+        codec       TEXT,
+        thumb_status TEXT NOT NULL DEFAULT 'pending',
+        view_count  INTEGER NOT NULL DEFAULT 0,
+        view_time_ms INTEGER NOT NULL DEFAULT 0,
+        content_fingerprint TEXT
+      );
+      INSERT INTO videos (id, path, folder, filename, size, mtime_ms, scanned_at)
+      VALUES (1, '/x.mp4', '/', 'x.mp4', 100, 1, 2);
+
+      CREATE TABLE thumbnails (
+        id          INTEGER PRIMARY KEY,
+        video_id    INTEGER NOT NULL REFERENCES "videos_old"(id) ON DELETE CASCADE,
+        frame_index INTEGER NOT NULL,
+        time_offset REAL    NOT NULL,
+        file_path   TEXT    NOT NULL,
+        UNIQUE(video_id, frame_index)
+      );
+      INSERT INTO thumbnails (video_id, frame_index, time_offset, file_path)
+      VALUES (1, 0, 0.0, '/thumbs/1/0.jpg');
+
+      CREATE TABLE video_tags (
+        video_id   INTEGER NOT NULL REFERENCES "videos_old"(id) ON DELETE CASCADE,
+        tag_name   TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (video_id, tag_name)
+      );
+      INSERT INTO video_tags VALUES (1, 'tag-a', 1000);
+
+      CREATE TABLE video_excluded_tags (
+        video_id   INTEGER NOT NULL REFERENCES "videos_old"(id) ON DELETE CASCADE,
+        tag_name   TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (video_id, tag_name)
+      );
+      INSERT INTO video_excluded_tags VALUES (1, 'tag-b', 1000);
+
+      DROP TABLE videos_old;
+    `);
+    brokenDb.close();
+
+    // Sanity check: confirm the DB really is broken before we heal it. With
+    // FKs ON, even the existing SELECT should still work (FK enforcement
+    // is on writes); what we want to confirm is the post-heal behaviour.
+    const pre = new Database(brokenPath, { readonly: true });
+    const preFks = pre.prepare(`PRAGMA foreign_key_list(thumbnails)`).all() as { table: string }[];
+    expect(preFks[0]?.table).toBe('videos_old');
+    pre.close();
+
+    initDb({ dbPath: brokenPath, thumbsDir: join(dir, 'thumbs') });
+
+    // The supporting tables' FKs now point at `videos`.
+    for (const table of ['thumbnails', 'video_tags', 'video_excluded_tags']) {
+      const fks = (new Database(brokenPath, { readonly: true }))
+        .prepare(`PRAGMA foreign_key_list(${table})`)
+        .all() as { table: string }[];
+      expect(fks.length).toBeGreaterThan(0);
+      for (const fk of fks) expect(fk.table).toBe('videos');
+    }
+
+    // Existing data was preserved.
+    expect(getThumbsForVideo(1)).toHaveLength(1);
+
+    // No FK violations, and an insert works (the exact failure mode that
+    // prompted the bug report: "no such table: main.videos_old").
+    const checker = new Database(brokenPath, { readonly: true });
+    checker.pragma('foreign_keys = ON');
+    expect(checker.pragma('foreign_key_check') as unknown[]).toEqual([]);
+
+    insertThumbnails([
+      { video_id: 1, frame_index: 1, time_offset: 1, file_path: '/thumbs/1/1.jpg' }
+    ]);
+    expect(getThumbsForVideo(1)).toHaveLength(2);
+  });
 });
 
 describe('backupCacheDbIfNewDay', () => {
