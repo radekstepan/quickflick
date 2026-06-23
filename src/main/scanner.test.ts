@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,7 +24,7 @@ import {
   getVideoByFingerprint,
   listAllVideos
 } from './db';
-import { _reconcile, type ReconcileInput } from './scanner';
+import { _reconcile, pruneEmptyDirs, type ReconcileInput } from './scanner';
 import { computeFingerprint } from './hasher';
 
 let dir: string;
@@ -490,5 +490,74 @@ describe('_reconcile', () => {
     const outcome = await _reconcile({ path: p, meta, ...indexes });
     expect(outcome.kind).toBe('moved');
     expect(getVideoByFingerprint(fp)?.path).toBe(p);
+  });
+});
+
+describe('pruneEmptyDirs', () => {
+  it('removes an empty subdirectory', async () => {
+    const empty = join(dir, 'empty');
+    mkdirSync(empty, { recursive: true });
+    const protect = new Set([dir]);
+    const visited = new Set([dir, empty]);
+    const removed = await pruneEmptyDirs(visited, protect);
+    expect(removed).toBe(1);
+    expect(existsSync(empty)).toBe(false);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it('removes nested empty directories bottom-up', async () => {
+    const a = join(dir, 'a');
+    const b = join(a, 'b');
+    const c = join(b, 'c');
+    mkdirSync(c, { recursive: true });
+    const protect = new Set([dir]);
+    const visited = new Set([dir, a, b, c]);
+    const removed = await pruneEmptyDirs(visited, protect);
+    expect(removed).toBe(3);
+    expect(existsSync(c)).toBe(false);
+    expect(existsSync(b)).toBe(false);
+    expect(existsSync(a)).toBe(false);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it('does not remove a directory containing a non-video file', async () => {
+    const withFile = join(dir, 'withFile');
+    mkdirSync(withFile, { recursive: true });
+    writeFileSync(join(withFile, 'notes.txt'), 'hello');
+    const protect = new Set([dir]);
+    const visited = new Set([dir, withFile]);
+    const removed = await pruneEmptyDirs(visited, protect);
+    expect(removed).toBe(0);
+    expect(existsSync(withFile)).toBe(true);
+  });
+
+  it('does not remove a protected root even if empty', async () => {
+    // `dir` is the test root, freshly created and already empty.
+    const protect = new Set([dir]);
+    const visited = new Set([dir]);
+    const removed = await pruneEmptyDirs(visited, protect);
+    expect(removed).toBe(0);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it('leaves siblings of an empty dir alone', async () => {
+    const empty = join(dir, 'empty');
+    const busy = join(dir, 'busy');
+    mkdirSync(empty, { recursive: true });
+    mkdirSync(busy, { recursive: true });
+    writeFileSync(join(busy, 'a.mp4'), '');
+    const protect = new Set([dir]);
+    const visited = new Set([dir, empty, busy]);
+    const removed = await pruneEmptyDirs(visited, protect);
+    expect(removed).toBe(1);
+    expect(existsSync(empty)).toBe(false);
+    expect(existsSync(busy)).toBe(true);
+  });
+
+  it('swallows readdir errors and returns 0', async () => {
+    const visited = new Set([join(dir, 'does-not-exist-' + Math.random())]);
+    const protect = new Set<string>();
+    const removed = await pruneEmptyDirs(visited, protect);
+    expect(removed).toBe(0);
   });
 });

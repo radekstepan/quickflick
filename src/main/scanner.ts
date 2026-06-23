@@ -1,4 +1,4 @@
-import { readdir, stat, realpath, access } from 'node:fs/promises';
+import { readdir, rmdir, stat, realpath, access } from 'node:fs/promises';
 import { join, basename, dirname, extname } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -47,9 +47,16 @@ function isVideoFile(name: string): boolean {
 
 type ProgressFn = (p: ScanProgress) => void;
 
-async function walk(root: string, onFile: (abs: string) => Promise<void>, onProgress?: (count: number) => void): Promise<number> {
+async function walk(
+  root: string,
+  onFile: (abs: string) => Promise<void>,
+  onProgress?: (count: number) => void,
+  visitedDirs?: Set<string>
+): Promise<{ count: number; visitedDirs: Set<string> }> {
   let count = 0;
+  const visited = visitedDirs ?? new Set<string>();
   const stack: string[] = [root];
+  visited.add(root);
   while (stack.length > 0) {
     const dir = stack.pop()!;
     let entries;
@@ -63,6 +70,7 @@ async function walk(root: string, onFile: (abs: string) => Promise<void>, onProg
       const abs = join(dir, entry.name);
       if (entry.isDirectory()) {
         stack.push(abs);
+        visited.add(abs);
       } else if (entry.isFile()) {
         if (isVideoFile(entry.name)) {
           await onFile(abs);
@@ -72,7 +80,38 @@ async function walk(root: string, onFile: (abs: string) => Promise<void>, onProg
       }
     }
   }
-  return count;
+  return { count, visitedDirs: visited };
+}
+
+// Remove any directory in `visited` that has zero entries. Sort deepest
+// first so leaves go before their parents — otherwise rmdir would fail
+// with ENOTEMPTY. Entries in `protect` are never removed (used to keep
+// registered library roots intact even if the user empties them).
+export async function pruneEmptyDirs(
+  visited: Set<string>,
+  protect: Set<string>
+): Promise<number> {
+  const sorted = Array.from(visited).sort((a, b) => b.length - a.length);
+  let removed = 0;
+  for (const dir of sorted) {
+    if (protect.has(dir)) continue;
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      // unreadable / vanished — leave it alone
+      continue;
+    }
+    if (entries.length > 0) continue;
+    try {
+      await rmdir(dir);
+      removed++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[prune] failed to remove empty dir ${dir}: ${msg}`);
+    }
+  }
+  return removed;
 }
 
 interface FoundMeta {
@@ -103,7 +142,7 @@ export async function scanLibrary(
   const roots = listRoots();
   if (roots.length === 0) {
     progress({ phase: 'done', processed: 0, total: 0 });
-    return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [] as ThumbnailFailure[] };
+    return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [] as ThumbnailFailure[], prunedFolders: 0 };
   }
 
   const realRoots: string[] = [];
@@ -118,9 +157,10 @@ export async function scanLibrary(
   progress({ phase: 'walking', processed: 0, total: 0 });
 
   const found = new Map<string, FoundMeta>();
+  const visitedDirs = new Set<string>();
   let walked = 0;
   for (const realRoot of realRoots) {
-    await walk(realRoot, async (abs) => {
+    const { count } = await walk(realRoot, async (abs) => {
       try {
         const st = await stat(abs);
         const folder = dirname(abs);
@@ -137,11 +177,20 @@ export async function scanLibrary(
     }, (c) => {
       walked = c;
       progress({ phase: 'walking', processed: c, total: 0 });
-    });
+    }, visitedDirs);
+    walked = count;
   }
 
   const total = found.size;
   progress({ phase: 'walking', processed: walked, total });
+
+  // After the walk, sweep up directories that contain no entries (often
+  // left behind when the user removes the last video in a folder). Roots
+  // are protected so the user must remove them explicitly via the UI.
+  const prunedFolders = await pruneEmptyDirs(visitedDirs, new Set(realRoots));
+  if (prunedFolders > 0) {
+    console.log(`[scan] pruned ${prunedFolders} empty folder(s)`);
+  }
 
   const validPaths = new Set(found.keys());
 
@@ -295,7 +344,7 @@ export async function scanLibrary(
   progress({ phase: 'done', processed: enqueued, total: enqueued });
 
   const totalVideos = found.size;
-  return { added, updated, removed, total: totalVideos, failedThumbnails };
+  return { added, updated, removed, total: totalVideos, failedThumbnails, prunedFolders };
 }
 
 interface ReconcileInput {

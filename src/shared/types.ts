@@ -64,6 +64,7 @@ export interface ScanResult {
   removed: number;
   total: number;
   failedThumbnails: ThumbnailFailure[];
+  prunedFolders: number;
 }
 
 export interface FfmpegStatus {

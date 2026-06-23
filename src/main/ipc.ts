@@ -121,7 +121,7 @@ export function registerIpc(): void {
   ipcMain.handle('library:retryFailedThumbs', async (): Promise<ScanResult> => {
     const resetCount = resetFailedThumbs();
     if (resetCount === 0) {
-      return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [] };
+      return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [], prunedFolders: 0 };
     }
     return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
   });
