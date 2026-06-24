@@ -376,6 +376,8 @@ export default function App() {
   const hasActiveFilter =
     selectedRoot !== null || selectedTag !== null || filterUntagged || search.trim() !== '';
 
+  const resetScrollKey = `${sortKey}|${selectedRoot}|${selectedTag}|${filterUntagged}|${search}`;
+
   if (lib.loading) {
     return (
       <div className="empty">
@@ -438,6 +440,7 @@ export default function App() {
             getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
+            resetScrollKey={resetScrollKey}
           />
         ) : (
           <VideoGrid
@@ -448,6 +451,7 @@ export default function App() {
             getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
+            resetScrollKey={resetScrollKey}
           />
         )}
       </div>

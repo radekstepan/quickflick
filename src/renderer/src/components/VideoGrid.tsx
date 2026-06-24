@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useRef, useState } from 'react';
-import { VirtuosoGrid } from 'react-virtuoso';
+import { VirtuosoGrid, VirtuosoGridHandle } from 'react-virtuoso';
 import { VideoCard } from './VideoCard';
 import { useViewportPrefetch } from '../hooks/useViewportPrefetch';
 import type { Tag } from '../utils/tags';
@@ -13,6 +13,7 @@ interface Props {
   getViewCount: (id: number, fallback: number) => number;
   onAddTag: (id: number, name: string) => void;
   onRemoveTag: (id: number, name: string) => void;
+  resetScrollKey: string;
 }
 
 const PADDING_X = 32;
@@ -24,12 +25,17 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function VideoGrid({ videos, roots, tags, onOpen, getViewCount, onAddTag, onRemoveTag }: Props) {
+export function VideoGrid({ videos, roots, tags, onOpen, getViewCount, onAddTag, onRemoveTag, resetScrollKey }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoGridHandle>(null);
   const [columns, setColumns] = useState<number>(1);
   const [visibleRange, setVisibleRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
 
   useViewportPrefetch(videos, visibleRange);
+
+  useEffect(() => {
+    virtuosoRef.current?.scrollTo({ top: 0 });
+  }, [resetScrollKey]);
 
   useEffect(() => {
     const el = hostRef.current;
@@ -48,6 +54,7 @@ export function VideoGrid({ videos, roots, tags, onOpen, getViewCount, onAddTag,
       style={{ '--grid-cols': columns } as React.CSSProperties}
     >
       <VirtuosoGrid
+        ref={virtuosoRef}
         data={videos}
         listClassName="grid-list"
         itemClassName="grid-item"

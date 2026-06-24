@@ -16,6 +16,7 @@ interface Props {
   getViewCount: (id: number, fallback: number) => number;
   onAddTag: (id: number, name: string) => void;
   onRemoveTag: (id: number, name: string) => void;
+  resetScrollKey: string;
 }
 
 const PADDING_X = 32;
@@ -27,9 +28,13 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function GroupedVideoGrid({ groups, roots, tags, onOpen, getViewCount, onAddTag, onRemoveTag }: Props) {
+export function GroupedVideoGrid({ groups, roots, tags, onOpen, getViewCount, onAddTag, onRemoveTag, resetScrollKey }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(1);
+
+  useEffect(() => {
+    hostRef.current?.scrollTo({ top: 0 });
+  }, [resetScrollKey]);
 
   useEffect(() => {
     const el = hostRef.current;
