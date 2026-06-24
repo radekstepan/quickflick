@@ -22,10 +22,22 @@ import { checkFfmpeg, checkFfprobe } from './ffmpeg';
 import { scanLibrary } from './scanner';
 import { thumbUrl, cacheBustThumbUrl } from './thumbnailer';
 import { attachToWindow as attachViewTracker, setViewedEmitter, startView } from './viewTracker';
+import {
+  getSettings,
+  listInstalledPlayers,
+  listKnownPlayers,
+  openWithPlayer,
+  setDefaultPlayer,
+  setTheme
+} from './settings';
 import type {
   ListOptions,
+  OpenResult,
+  PickedApp,
+  PlayerChoice,
   ScanProgress,
   ScanResult,
+  Theme,
   VideoViewedEvent,
   VideoWithThumbs
 } from '../shared/types';
@@ -147,13 +159,29 @@ export function registerIpc(): void {
     return listAllFolders();
   });
 
-  ipcMain.handle('video:open', async (_e, id: number): Promise<number> => {
+  ipcMain.handle('video:open', async (_e, id: number): Promise<OpenResult> => {
     const v = getVideoById(id);
     if (!v) throw new Error('Video not found');
-    const result = await shell.openPath(v.path);
-    if (result) throw new Error(result);
+    const { defaultPlayer } = getSettings();
+    let usedFallback = false;
+    let error: string | undefined;
+    if (defaultPlayer === 'system') {
+      const result = await shell.openPath(v.path);
+      if (result) throw new Error(result);
+    } else {
+      const launch = await openWithPlayer(v.path, defaultPlayer);
+      if (!launch.ok) {
+        const fallback = await shell.openPath(v.path);
+        if (fallback) throw new Error(fallback);
+        usedFallback = true;
+        error = launch.error;
+      } else {
+        usedFallback = launch.usedFallback;
+        if (usedFallback) error = launch.error;
+      }
+    }
     startView(id);
-    return v.view_count;
+    return { view_count: v.view_count, usedFallback, error };
   });
 
   ipcMain.handle('video:reveal', async (_e, id: number) => {
@@ -185,5 +213,60 @@ export function registerIpc(): void {
     // The renderer subscribes by calling onScanProgress; the actual
     // delivery uses webContents.send. This handler is just a no-op
     // marker so the channel exists.
+  });
+
+  ipcMain.handle('settings:get', async () => {
+    return getSettings();
+  });
+
+  ipcMain.handle('settings:setTheme', async (_e, theme: Theme) => {
+    setTheme(theme);
+  });
+
+  ipcMain.handle(
+    'settings:setDefaultPlayer',
+    async (_e, player: PlayerChoice, appPath?: string | null) => {
+      setDefaultPlayer(player, appPath);
+    }
+  );
+
+  ipcMain.handle('settings:listPlayers', async () => {
+    return {
+      installed: listInstalledPlayers(),
+      known: listKnownPlayers()
+    };
+  });
+
+  ipcMain.handle('settings:pickApp', async (): Promise<PickedApp | null> => {
+    const win = getMainWindow();
+    const options = {
+      title: 'Choose a video player',
+      properties: ['openFile' as const],
+      filters: [{ name: 'Applications', extensions: ['app'] }],
+      defaultPath: '/Applications'
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const path = result.filePaths[0];
+    const plist = `${path}/Contents/Info.plist`;
+    const fs = await import('node:fs');
+    let name: string | null = null;
+    try {
+      if (fs.existsSync(plist)) {
+        const raw = fs.readFileSync(plist, 'utf8');
+        const m = raw.match(/<key>CFBundleName<\/key>\s*<string>([^<]+)<\/string>/);
+        if (m) name = m[1].trim();
+      }
+    } catch {
+      // ignore
+    }
+    if (!name) {
+      const parts = path.split('/').filter(Boolean);
+      const last = parts[parts.length - 1] ?? path;
+      name = last.replace(/\.app$/, '');
+    }
+    return { name, path };
   });
 }

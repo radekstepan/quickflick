@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { VideoCard } from './VideoCard';
 import type { Tag } from '../utils/tags';
-import type { VideoWithThumbs } from '@shared/types';
+import type { OpenResult, VideoWithThumbs } from '@shared/types';
 
 export interface VideoGroup {
   tag: string | null;
@@ -12,7 +12,8 @@ interface Props {
   groups: VideoGroup[];
   roots: string[];
   tags: Tag[];
-  onOpen: (id: number) => Promise<number>;
+  onOpen: (id: number) => Promise<OpenResult>;
+  onOpened?: (result: OpenResult) => void;
   getViewCount: (id: number, fallback: number) => number;
   onAddTag: (id: number, name: string) => void;
   onRemoveTag: (id: number, name: string) => void;
@@ -28,7 +29,7 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function GroupedVideoGrid({ groups, roots, tags, onOpen, getViewCount, onAddTag, onRemoveTag, resetScrollKey }: Props) {
+export function GroupedVideoGrid({ groups, roots, tags, onOpen, onOpened, getViewCount, onAddTag, onRemoveTag, resetScrollKey }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(1);
 
@@ -66,6 +67,7 @@ export function GroupedVideoGrid({ groups, roots, tags, onOpen, getViewCount, on
                 roots={roots}
                 tags={tags}
                 onOpen={onOpen}
+                onOpened={onOpened}
                 onAddTag={onAddTag}
                 onRemoveTag={onRemoveTag}
               />

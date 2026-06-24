@@ -7,13 +7,14 @@ import { displayName } from '../utils/displayName';
 import { getMatchingTags, type Tag } from '../utils/tags';
 import { formatViewsWithTime } from '../utils/formatViewTime';
 import { TagPickerModal } from './TagPickerModal';
-import type { VideoWithThumbs } from '@shared/types';
+import type { OpenResult, VideoWithThumbs } from '@shared/types';
 
 interface Props {
   video: VideoWithThumbs;
   roots: string[];
   tags: Tag[];
-  onOpen: (id: number) => void;
+  onOpen: (id: number) => Promise<OpenResult> | void;
+  onOpened?: (result: OpenResult) => void;
   onAddTag: (id: number, name: string) => void;
   onRemoveTag: (id: number, name: string) => void;
 }
@@ -44,7 +45,7 @@ export function viewsLabel(viewCount: number, viewTimeMs: number): string {
   return formatViewsWithTime(viewCount, viewTimeMs);
 }
 
-export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }: Props) {
+export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRemoveTag }: Props) {
   const urls = useMemo(
     () =>
       video.thumbnails
@@ -141,10 +142,17 @@ export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }:
     };
   }, [menu]);
 
+  const handleOpen = () => {
+    const result = onOpen(video.id);
+    if (result && typeof (result as Promise<OpenResult>).then === 'function') {
+      void (result as Promise<OpenResult>).then((r) => onOpened?.(r));
+    }
+  };
+
   return (
     <div
       className="card"
-      onClick={() => onOpen(video.id)}
+      onClick={handleOpen}
       onContextMenu={(e) => {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY });
@@ -191,7 +199,7 @@ export function VideoCard({ video, roots, tags, onOpen, onAddTag, onRemoveTag }:
                 className="context-menu-item"
                 onClick={() => {
                   setMenu(null);
-                  void api.openVideo(video.id);
+                  handleOpen();
                 }}
               >
                 <span className="context-menu-icon" aria-hidden="true">

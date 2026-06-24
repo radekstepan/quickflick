@@ -2,12 +2,14 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { api } from '../api';
 import type {
   FfmpegStatus,
+  OpenResult,
   ScanProgress,
   ScanResult,
   ThumbnailFailure,
   VideoWithThumbs
 } from '@shared/types';
 import { extractTagsWithFolders, type Tag } from '../utils/tags';
+import { showOpenToast } from '../components/OpenToast';
 
 export interface LibraryState {
   roots: string[];
@@ -25,7 +27,8 @@ export interface LibraryState {
   retryFailedThumbs: () => Promise<void>;
   resetAllThumbs: () => Promise<void>;
   reload: () => Promise<void>;
-  openVideo: (id: number) => Promise<number>;
+  openVideo: (id: number) => Promise<OpenResult>;
+  onVideoOpened: (result: OpenResult) => void;
   hideTag: (name: string) => void;
   unhideTag: (name: string) => void;
   unhideAllTags: () => void;
@@ -247,12 +250,20 @@ export function useLibrary(): LibraryState {
     }
   }, [isScanning, reload]);
 
-  const openVideo = useCallback(async (id: number): Promise<number> => {
+  const openVideo = useCallback(async (id: number): Promise<OpenResult> => {
     try {
       return await api.openVideo(id);
     } catch (e) {
       console.error('Open failed:', e);
-      return 0;
+      return { view_count: 0, usedFallback: false, error: String(e) };
+    }
+  }, []);
+
+  const onVideoOpened = useCallback((result: OpenResult) => {
+    if (result.usedFallback && result.error) {
+      showOpenToast(
+        `Couldn't open in your default player. Falling back to system default.`
+      );
     }
   }, []);
 
@@ -377,6 +388,7 @@ export function useLibrary(): LibraryState {
     resetAllThumbs,
     reload,
     openVideo,
+    onVideoOpened,
     hideTag,
     unhideTag,
     unhideAllTags,

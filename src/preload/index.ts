@@ -1,11 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Api,
+  AppSettings,
   ListOptions,
+  OpenResult,
+  PickedApp,
+  PlayerChoice,
+  PlayerList,
   RemoveRootResult,
   ScanProgress,
   FfmpegStatus,
   ScanResult,
+  Theme,
   VideoViewedEvent,
   VideoWithThumbs,
   MenuCommand
@@ -21,7 +27,7 @@ const api: Api = {
   resetAllThumbs: () => ipcRenderer.invoke('library:resetAllThumbs') as Promise<ScanResult>,
   listVideos: (opts?: ListOptions) =>
     ipcRenderer.invoke('library:listVideos', opts) as Promise<VideoWithThumbs[]>,
-  openVideo: (id) => ipcRenderer.invoke('video:open', id) as Promise<number>,
+  openVideo: (id) => ipcRenderer.invoke('video:open', id) as Promise<OpenResult>,
   revealVideo: (id) => ipcRenderer.invoke('video:reveal', id),
   onScanProgress: (cb) => {
     const listener = (_e: unknown, p: ScanProgress) => cb(p);
@@ -53,7 +59,14 @@ const api: Api = {
   setVideoTag: (id, name) => ipcRenderer.invoke('video:setTag', id, name) as Promise<void>,
   removeVideoTag: (id, name) =>
     ipcRenderer.invoke('video:removeTag', id, name) as Promise<void>,
-  getAllUserTagNames: () => ipcRenderer.invoke('tags:list') as Promise<string[]>
+  getAllUserTagNames: () => ipcRenderer.invoke('tags:list') as Promise<string[]>,
+  getSettings: () => ipcRenderer.invoke('settings:get') as Promise<AppSettings>,
+  setTheme: (theme: Theme) =>
+    ipcRenderer.invoke('settings:setTheme', theme) as Promise<void>,
+  setDefaultPlayer: (player: PlayerChoice, appPath?: string | null) =>
+    ipcRenderer.invoke('settings:setDefaultPlayer', player, appPath) as Promise<void>,
+  listPlayers: () => ipcRenderer.invoke('settings:listPlayers') as Promise<PlayerList>,
+  pickApp: () => ipcRenderer.invoke('settings:pickApp') as Promise<PickedApp | null>
 };
 
 contextBridge.exposeInMainWorld('api', api);

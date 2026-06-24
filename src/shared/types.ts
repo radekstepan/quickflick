@@ -102,6 +102,30 @@ export interface VideoViewedEvent {
   view_time_ms: number;
 }
 
+export type Theme = 'dark' | 'light';
+export type PlayerChoice = 'system' | string;
+
+export interface AppSettings {
+  theme: Theme;
+  defaultPlayer: PlayerChoice;
+}
+
+export interface PlayerList {
+  installed: string[];
+  known: string[];
+}
+
+export interface PickedApp {
+  name: string;
+  path: string;
+}
+
+export interface OpenResult {
+  view_count: number;
+  usedFallback: boolean;
+  error?: string;
+}
+
 export interface Api {
   pickFolder: () => Promise<string | null>;
   addRoot: (path: string) => Promise<void>;
@@ -111,7 +135,7 @@ export interface Api {
   retryFailedThumbs: () => Promise<ScanResult>;
   resetAllThumbs: () => Promise<ScanResult>;
   listVideos: (opts?: ListOptions) => Promise<VideoWithThumbs[]>;
-  openVideo: (id: number) => Promise<number>;
+  openVideo: (id: number) => Promise<OpenResult>;
   revealVideo: (id: number) => Promise<void>;
   onScanProgress: (cb: (p: ScanProgress) => void) => () => void;
   onMenuCommand: (cb: (cmd: MenuCommand) => void) => () => void;
@@ -123,4 +147,9 @@ export interface Api {
   setVideoTag: (videoId: number, tagName: string) => Promise<void>;
   removeVideoTag: (videoId: number, tagName: string) => Promise<void>;
   getAllUserTagNames: () => Promise<string[]>;
+  getSettings: () => Promise<AppSettings>;
+  setTheme: (theme: Theme) => Promise<void>;
+  setDefaultPlayer: (player: PlayerChoice, appPath?: string | null) => Promise<void>;
+  listPlayers: () => Promise<PlayerList>;
+  pickApp: () => Promise<PickedApp | null>;
 }

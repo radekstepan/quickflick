@@ -360,6 +360,22 @@ function getDb(): Database.Database {
   return db;
 }
 
+export function readKv(key: string): string | null {
+  const row = getDb()
+    .prepare('SELECT value FROM kv WHERE key = ?')
+    .get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function writeKv(key: string, value: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO kv (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    .run(key, value);
+}
+
 export function listRoots(): string[] {
   const rows = getDb()
     .prepare('SELECT path FROM library_roots ORDER BY added_at, path')

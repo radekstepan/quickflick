@@ -5,7 +5,12 @@ import { VideoGrid } from './components/VideoGrid';
 import { GroupedVideoGrid, type VideoGroup } from './components/GroupedVideoGrid';
 import { EmptyState } from './components/EmptyState';
 import { FfmpegMissing } from './components/FfmpegMissing';
+import { GearButton } from './components/GearButton';
+import { ThemeButton } from './components/ThemeButton';
+import { SettingsModal } from './components/SettingsModal';
+import { OpenToastHost } from './components/OpenToast';
 import { useLibrary } from './hooks/useLibrary';
+import { useSettings } from './hooks/useSettings';
 import { videoMatchesTag, getMatchingTags, type Tag } from './utils/tags';
 import { displayName } from './utils/displayName';
 import type { SortKey } from './components/SortDropdown';
@@ -143,11 +148,13 @@ function pickSorter(key: SortKey, roots: string[]): Sorter {
 
 export default function App() {
   const lib = useLibrary();
+  const settingsState = useSettings();
   const [selectedRoot, setSelectedRoot] = useState<string | null>(() => loadStoredString(SELECTED_ROOT_STORAGE));
   const [selectedTag, setSelectedTag] = useState<string | null>(() => loadStoredString(SELECTED_TAG_STORAGE));
   const [filterUntagged, setFilterUntagged] = useState<boolean>(() => loadStoredBoolean(FILTER_UNTAGGED_STORAGE, false));
   const [search, setSearch] = useState<string>(() => loadStoredString(SEARCH_STORAGE) ?? '');
   const [ffmpegDismissed, setFfmpegDismissed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>(loadSortKey);
   // Timestamp captured when the user picks a sort. Used by buildDateGroups
   // so the bucket boundaries (Today / Yesterday / This week / ...) don't
@@ -388,7 +395,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="titlebar">QuickFlick</div>
+      <div className="titlebar">
+        <span>QuickFlick</span>
+        <div className="titlebar-right">
+          <ThemeButton />
+          <GearButton onClick={() => setSettingsOpen(true)} />
+        </div>
+      </div>
 
       <Toolbar
         hasRoots={lib.roots.length > 0}
@@ -437,6 +450,7 @@ export default function App() {
             roots={lib.roots}
             tags={lib.tags}
             onOpen={lib.openVideo}
+            onOpened={lib.onVideoOpened}
             getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
@@ -448,6 +462,7 @@ export default function App() {
             roots={lib.roots}
             tags={lib.tags}
             onOpen={lib.openVideo}
+            onOpened={lib.onVideoOpened}
             getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
@@ -462,6 +477,18 @@ export default function App() {
           onDismiss={() => setFfmpegDismissed(true)}
         />
       ) : null}
+
+      {settingsOpen && settingsState.settings && settingsState.players ? (
+        <SettingsModal
+          settings={settingsState.settings}
+          players={settingsState.players}
+          onClose={() => setSettingsOpen(false)}
+          onSetDefaultPlayer={settingsState.setDefaultPlayer}
+          onPlayersChanged={settingsState.refreshPlayers}
+        />
+      ) : null}
+
+      <OpenToastHost />
     </div>
   );
 }
