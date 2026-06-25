@@ -1485,6 +1485,64 @@ input[type='search']::-webkit-search-cancel-button {
   margin: 4px 0;
 }
 
+.settings-accent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-accent-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  padding: 0;
+  cursor: default;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25),
+    0 0 0 0 var(--accent-glow-soft);
+  transition:
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.settings-accent-swatch:hover {
+  transform: scale(1.08);
+  border-color: var(--border-strong);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3),
+    0 0 0 4px var(--accent-glow-soft);
+}
+
+.settings-accent-swatch:active {
+  transform: scale(1.02);
+}
+
+.settings-accent-swatch.active {
+  border-color: var(--text);
+  box-shadow:
+    0 0 0 2px var(--bg-elev),
+    0 0 0 4px var(--text),
+    0 0 0 10px var(--accent-glow-soft);
+}
+
+.settings-accent-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.settings-accent-check {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
 .settings-footer {
   display: flex;
   align-items: center;

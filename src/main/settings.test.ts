@@ -17,6 +17,7 @@ import {
   KNOWN_PLAYERS,
   getSettings,
   setTheme,
+  setAccentColor,
   setDefaultPlayer,
   readKv,
   writeKv,
@@ -88,6 +89,26 @@ describe('settings storage', () => {
     writeKv('settings:defaultPlayer', '');
     const s = getSettings();
     expect(s.defaultPlayer).toBe('VLC');
+  });
+
+  it('returns accentColor=red by default', () => {
+    const s = getSettings();
+    expect(s.accentColor).toBe('red');
+    expect(DEFAULT_SETTINGS.accentColor).toBe('red');
+  });
+
+  it('persists and reads accentColor', () => {
+    setAccentColor('blue');
+    expect(getSettings().accentColor).toBe('blue');
+    setAccentColor('green');
+    expect(getSettings().accentColor).toBe('green');
+    setAccentColor('red');
+    expect(getSettings().accentColor).toBe('red');
+  });
+
+  it('falls back to red for unknown accentColor values', () => {
+    writeKv('settings:accentColor', 'neon');
+    expect(getSettings().accentColor).toBe('red');
   });
 });
 

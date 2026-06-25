@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import type { AppSettings, PlayerChoice, PlayerList, Theme } from '@shared/types';
+import {
+  DEFAULT_ACCENT_COLOR,
+  isAccentColor,
+  variantsFor
+} from '@shared/palette';
+import type { AccentColor, AppSettings, PlayerChoice, PlayerList, Theme } from '@shared/types';
 
 const THEME_STORAGE = 'qf:theme';
 const PLAYER_STORAGE = 'qf:defaultPlayer';
+const ACCENT_STORAGE = 'qf:accentColor';
 
 function loadCachedTheme(): Theme | null {
   try {
@@ -26,6 +32,16 @@ function loadCachedPlayer(): PlayerChoice | null {
   return null;
 }
 
+function loadCachedAccent(): AccentColor | null {
+  try {
+    const raw = localStorage.getItem(ACCENT_STORAGE);
+    if (raw && isAccentColor(raw)) return raw;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 function saveCachedTheme(theme: Theme): void {
   try {
     localStorage.setItem(THEME_STORAGE, theme);
@@ -42,9 +58,35 @@ function saveCachedPlayer(player: PlayerChoice): void {
   }
 }
 
+function saveCachedAccent(color: AccentColor): void {
+  try {
+    localStorage.setItem(ACCENT_STORAGE, color);
+  } catch {
+    // ignore
+  }
+}
+
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
   saveCachedTheme(theme);
+}
+
+const ACCENT_VARS: ReadonlyArray<[string, keyof ReturnType<typeof variantsFor>]> = [
+  ['--accent', 'accent'],
+  ['--accent-hover', 'accentHover'],
+  ['--accent-soft', 'accentSoft'],
+  ['--accent-glow', 'accentGlow'],
+  ['--accent-glow-soft', 'accentGlowSoft'],
+  ['--primary-shadow', 'primaryShadow']
+];
+
+export function applyAccentColor(color: AccentColor, theme: Theme): void {
+  const variants = variantsFor(color, theme);
+  const root = document.documentElement;
+  for (const [name, key] of ACCENT_VARS) {
+    root.style.setProperty(name, variants[key]);
+  }
+  saveCachedAccent(color);
 }
 
 export interface UseSettings {
@@ -55,17 +97,20 @@ export interface UseSettings {
     next: PlayerChoice,
     appPath?: string | null
   ) => Promise<void>;
+  setAccentColor: (next: AccentColor) => Promise<void>;
   refreshPlayers: () => Promise<void>;
 }
 
 export function useSettings(): UseSettings {
   const cachedTheme = loadCachedTheme();
   const cachedPlayer = loadCachedPlayer();
+  const cachedAccent = loadCachedAccent();
   const [settings, setSettings] = useState<AppSettings | null>(() => {
-    if (cachedTheme || cachedPlayer) {
+    if (cachedTheme || cachedPlayer || cachedAccent) {
       return {
         theme: cachedTheme ?? 'dark',
-        defaultPlayer: cachedPlayer ?? 'system'
+        defaultPlayer: cachedPlayer ?? 'system',
+        accentColor: cachedAccent ?? DEFAULT_ACCENT_COLOR
       };
     }
     return null;
@@ -73,10 +118,10 @@ export function useSettings(): UseSettings {
   const [players, setPlayers] = useState<PlayerList | null>(null);
 
   useEffect(() => {
-    if (settings) {
-      applyTheme(settings.theme);
-    }
-  }, [settings?.theme]);
+    if (!settings) return;
+    applyTheme(settings.theme);
+    applyAccentColor(settings.accentColor, settings.theme);
+  }, [settings?.theme, settings?.accentColor]);
 
   useEffect(() => {
     let mounted = true;
@@ -87,6 +132,7 @@ export function useSettings(): UseSettings {
         setSettings(s);
         setPlayers(p);
         applyTheme(s.theme);
+        applyAccentColor(s.accentColor, s.theme);
         saveCachedPlayer(s.defaultPlayer);
       } catch (e) {
         console.error('Failed to load settings:', e);
@@ -99,7 +145,9 @@ export function useSettings(): UseSettings {
 
   const setThemeFn = useCallback(async (next: Theme) => {
     setSettings((prev) =>
-      prev ? { ...prev, theme: next } : { theme: next, defaultPlayer: 'system' }
+      prev
+        ? { ...prev, theme: next }
+        : { theme: next, defaultPlayer: 'system', accentColor: DEFAULT_ACCENT_COLOR }
     );
     applyTheme(next);
     try {
@@ -112,7 +160,9 @@ export function useSettings(): UseSettings {
   const setDefaultPlayerFn = useCallback(
     async (next: PlayerChoice, appPath?: string | null) => {
       setSettings((prev) =>
-        prev ? { ...prev, defaultPlayer: next } : { theme: 'dark', defaultPlayer: next }
+        prev
+          ? { ...prev, defaultPlayer: next }
+          : { theme: 'dark', defaultPlayer: next, accentColor: DEFAULT_ACCENT_COLOR }
       );
       saveCachedPlayer(next);
       try {
@@ -123,6 +173,23 @@ export function useSettings(): UseSettings {
     },
     []
   );
+
+  const setAccentColorFn = useCallback(async (next: AccentColor) => {
+    setSettings((prev) =>
+      prev
+        ? { ...prev, accentColor: next }
+        : { theme: 'dark', defaultPlayer: 'system', accentColor: next }
+    );
+    const theme: Theme = (typeof document !== 'undefined'
+      ? (document.documentElement.dataset.theme as Theme | undefined)
+      : undefined) ?? 'dark';
+    applyAccentColor(next, theme);
+    try {
+      await api.setAccentColor(next);
+    } catch (e) {
+      console.error('Failed to persist accent color:', e);
+    }
+  }, []);
 
   const refreshPlayers = useCallback(async () => {
     try {
@@ -138,6 +205,7 @@ export function useSettings(): UseSettings {
     players,
     setTheme: setThemeFn,
     setDefaultPlayer: setDefaultPlayerFn,
+    setAccentColor: setAccentColorFn,
     refreshPlayers
   };
 }

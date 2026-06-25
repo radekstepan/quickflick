@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api';
+import { ACCENT_COLOR_IDS, ACCENT_COLORS } from '@shared/palette';
 import type {
+  AccentColor,
   AppSettings,
   PlayerChoice,
   PlayerList
@@ -15,6 +17,7 @@ interface Props {
     player: PlayerChoice,
     appPath?: string | null
   ) => void;
+  onSetAccentColor: (color: AccentColor) => void;
   onPlayersChanged: () => void;
 }
 
@@ -43,6 +46,7 @@ export function SettingsModal({
   players,
   onClose,
   onSetDefaultPlayer,
+  onSetAccentColor,
   onPlayersChanged
 }: Props) {
   const [playerOpen, setPlayerOpen] = useState(false);
@@ -109,6 +113,7 @@ export function SettingsModal({
 
   const resetDefaults = () => {
     onSetDefaultPlayer('system', null);
+    onSetAccentColor('red');
   };
 
   return createPortal(
@@ -191,6 +196,42 @@ export function SettingsModal({
           <div className="settings-subtext">
             QuickFlick runs <code>open -a &lt;App&gt; &lt;video&gt;</code> for each
             open. If the app is missing, it falls back to the macOS default.
+          </div>
+        </div>
+
+        <div className="settings-divider" />
+
+        <div className="settings-section">
+          <div className="settings-section-label">Accent color</div>
+          <div className="settings-accent-row" role="radiogroup" aria-label="Accent color">
+            {ACCENT_COLOR_IDS.map((id) => {
+              const preset = ACCENT_COLORS[id];
+              const isActive = id === settings.accentColor;
+              return (
+                <button
+                  type="button"
+                  key={id}
+                  role="radio"
+                  aria-checked={isActive}
+                  aria-label={preset.label}
+                  title={preset.label}
+                  className={`settings-accent-swatch${
+                    isActive ? ' active' : ''
+                  }`}
+                  style={{ backgroundColor: preset.swatch }}
+                  onClick={() => onSetAccentColor(id)}
+                >
+                  {isActive ? (
+                    <span className="settings-accent-check" aria-hidden="true">
+                      ✓
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+          <div className="settings-subtext">
+            Recolors highlights, focus rings, and the active selection across the app.
           </div>
         </div>
 

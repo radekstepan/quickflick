@@ -105,9 +105,20 @@ export interface VideoViewedEvent {
 export type Theme = 'dark' | 'light';
 export type PlayerChoice = 'system' | string;
 
+export type AccentColor =
+  | 'red'
+  | 'orange'
+  | 'amber'
+  | 'green'
+  | 'teal'
+  | 'blue'
+  | 'indigo'
+  | 'pink';
+
 export interface AppSettings {
   theme: Theme;
   defaultPlayer: PlayerChoice;
+  accentColor: AccentColor;
 }
 
 export interface PlayerList {
@@ -149,6 +160,7 @@ export interface Api {
   getAllUserTagNames: () => Promise<string[]>;
   getSettings: () => Promise<AppSettings>;
   setTheme: (theme: Theme) => Promise<void>;
+  setAccentColor: (color: AccentColor) => Promise<void>;
   setDefaultPlayer: (player: PlayerChoice, appPath?: string | null) => Promise<void>;
   listPlayers: () => Promise<PlayerList>;
   pickApp: () => Promise<PickedApp | null>;

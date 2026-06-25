@@ -2,15 +2,18 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { readKv, writeKv } from './db';
-import type { AppSettings, PlayerChoice, Theme } from '../shared/types';
+import { DEFAULT_ACCENT_COLOR, isAccentColor } from '../shared/palette';
+import type { AccentColor, AppSettings, PlayerChoice, Theme } from '../shared/types';
 
 const THEME_KEY = 'settings:theme';
 const PLAYER_KEY = 'settings:defaultPlayer';
 const CUSTOM_PLAYER_PATH_KEY = 'settings:defaultPlayerPath';
+const ACCENT_KEY = 'settings:accentColor';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
-  defaultPlayer: 'system'
+  defaultPlayer: 'system',
+  accentColor: DEFAULT_ACCENT_COLOR
 };
 
 interface PlayerSpec {
@@ -49,6 +52,11 @@ function readTheme(): Theme {
   return raw === 'light' || raw === 'dark' ? raw : DEFAULT_SETTINGS.theme;
 }
 
+function readAccentColor(): AccentColor {
+  const raw = readKv(ACCENT_KEY);
+  return raw && isAccentColor(raw) ? raw : DEFAULT_SETTINGS.accentColor;
+}
+
 function readPlayer(): PlayerChoice {
   const raw = readKv(PLAYER_KEY);
   if (!raw) return DEFAULT_SETTINGS.defaultPlayer;
@@ -62,6 +70,7 @@ function readCustomPlayerPath(): string | null {
 
 export function getSettings(): AppSettings {
   const theme = readTheme();
+  const accentColor = readAccentColor();
   let defaultPlayer = readPlayer();
   if (defaultPlayer === 'system' && !readKv(PLAYER_KEY)) {
     const hasVlc = existsSync(
@@ -74,7 +83,8 @@ export function getSettings(): AppSettings {
   }
   return {
     theme,
-    defaultPlayer
+    defaultPlayer,
+    accentColor
   };
 }
 
@@ -84,6 +94,10 @@ export function getDefaultPlayerPath(): string | null {
 
 export function setTheme(theme: Theme): void {
   writeKv(THEME_KEY, theme);
+}
+
+export function setAccentColor(color: AccentColor): void {
+  writeKv(ACCENT_KEY, color);
 }
 
 export function setDefaultPlayer(player: PlayerChoice, appPath?: string | null): void {

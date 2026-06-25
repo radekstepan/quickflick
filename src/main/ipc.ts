@@ -27,10 +27,12 @@ import {
   listInstalledPlayers,
   listKnownPlayers,
   openWithPlayer,
+  setAccentColor,
   setDefaultPlayer,
   setTheme
 } from './settings';
 import type {
+  AccentColor,
   ListOptions,
   OpenResult,
   PickedApp,
@@ -221,6 +223,10 @@ export function registerIpc(): void {
 
   ipcMain.handle('settings:setTheme', async (_e, theme: Theme) => {
     setTheme(theme);
+  });
+
+  ipcMain.handle('settings:setAccent', async (_e, color: AccentColor) => {
+    setAccentColor(color);
   });
 
   ipcMain.handle(

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AccentColor,
   Api,
   AppSettings,
   ListOptions,
@@ -63,6 +64,8 @@ const api: Api = {
   getSettings: () => ipcRenderer.invoke('settings:get') as Promise<AppSettings>,
   setTheme: (theme: Theme) =>
     ipcRenderer.invoke('settings:setTheme', theme) as Promise<void>,
+  setAccentColor: (color: AccentColor) =>
+    ipcRenderer.invoke('settings:setAccent', color) as Promise<void>,
   setDefaultPlayer: (player: PlayerChoice, appPath?: string | null) =>
     ipcRenderer.invoke('settings:setDefaultPlayer', player, appPath) as Promise<void>,
   listPlayers: () => ipcRenderer.invoke('settings:listPlayers') as Promise<PlayerList>,

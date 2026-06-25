@@ -484,6 +484,7 @@ export default function App() {
           players={settingsState.players}
           onClose={() => setSettingsOpen(false)}
           onSetDefaultPlayer={settingsState.setDefaultPlayer}
+          onSetAccentColor={settingsState.setAccentColor}
           onPlayersChanged={settingsState.refreshPlayers}
         />
       ) : null}
