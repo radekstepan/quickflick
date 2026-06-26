@@ -28,6 +28,7 @@ import {
   removeStaleVideos,
   insertThumbnails,
   getThumbsForVideo,
+  deleteSceneThumbsForVideo,
   backupCacheDbIfNewDay,
   migrateLegacyCacheDb
 } from './db';
@@ -238,7 +239,8 @@ describe('deleteVideo (cascade)', () => {
         video_id: id,
         frame_index: i,
         time_offset: i,
-        file_path: `/thumbs/${id}/${i}.jpg`
+        file_path: `/thumbs/${id}/${i}.jpg`,
+        kind: 'interval' as const
       }))
     );
     expect(getThumbsForVideo(id)).toHaveLength(3);
@@ -448,7 +450,7 @@ describe('schema migration', () => {
     // A subsequent thumbnail insert must succeed (this is the exact failure
     // the bug presented as: "no such table: main.videos_old").
     insertThumbnails([
-      { video_id: 1, frame_index: 7, time_offset: 7, file_path: '/thumbs/1/7.jpg' }
+      { video_id: 1, frame_index: 7, time_offset: 7, file_path: '/thumbs/1/7.jpg', kind: 'interval' }
     ]);
     expect(getThumbsForVideo(1)).toHaveLength(3);
   });
@@ -554,9 +556,91 @@ describe('schema migration', () => {
     expect(checker.pragma('foreign_key_check') as unknown[]).toEqual([]);
 
     insertThumbnails([
-      { video_id: 1, frame_index: 1, time_offset: 1, file_path: '/thumbs/1/1.jpg' }
+      { video_id: 1, frame_index: 1, time_offset: 1, file_path: '/thumbs/1/1.jpg', kind: 'interval' }
     ]);
     expect(getThumbsForVideo(1)).toHaveLength(2);
+  });
+});
+
+describe('thumbnails.kind column', () => {
+  it("backfills `kind = 'interval'` on a pre-existing thumbnails table", () => {
+    // Simulate a DB written by an older version: `thumbnails` exists with
+    // its original 5 columns and no `kind` column. `initDb` must add the
+    // column with the historical default rather than lose the existing
+    // rows.
+    closeDb();
+    const path = join(dir, 'cache.db');
+    rmSync(path, { force: true });
+    const oldDb = new Database(path);
+    oldDb.exec(`
+      CREATE TABLE videos (
+        id INTEGER PRIMARY KEY,
+        path TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ms INTEGER NOT NULL,
+        duration REAL,
+        width INTEGER,
+        height INTEGER,
+        scanned_at INTEGER NOT NULL,
+        codec TEXT,
+        thumb_status TEXT NOT NULL DEFAULT 'pending',
+        view_count INTEGER NOT NULL DEFAULT 0,
+        view_time_ms INTEGER NOT NULL DEFAULT 0,
+        content_fingerprint TEXT
+      );
+      CREATE TABLE thumbnails (
+        id          INTEGER PRIMARY KEY,
+        video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        frame_index INTEGER NOT NULL,
+        time_offset REAL    NOT NULL,
+        file_path   TEXT    NOT NULL,
+        UNIQUE(video_id, frame_index)
+      );
+      INSERT INTO videos (id, path, folder, filename, size, mtime_ms, scanned_at, content_fingerprint)
+      VALUES (1, '/old/k.mp4', '/old', 'k.mp4', 1, 1, 1, 'fp');
+      INSERT INTO thumbnails (video_id, frame_index, time_offset, file_path)
+      VALUES (1, 0, 0, '/thumbs/1/0.jpg'),
+             (1, 1, 1, '/thumbs/1/1.jpg');
+    `);
+    oldDb.close();
+
+    initDb({ dbPath: path, thumbsDir: join(dir, 'thumbs') });
+
+    const rows = getThumbsForVideo(1);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.kind === 'interval')).toBe(true);
+  });
+
+  it('keeps scene and interval thumbs addressable via the kind column', () => {
+    initDb({ dbPath: join(dir, 'kind-insert.db'), thumbsDir: join(dir, 'thumbs') });
+    insertVideo({
+      path: '/k/x.mp4',
+      folder: '/k',
+      filename: 'x.mp4',
+      size: 1,
+      mtime_ms: 1,
+      duration: 10,
+      width: 100,
+      height: 200,
+      codec: 'h264',
+      content_fingerprint: 'fp1'
+    });
+    const v = getVideoByPath('/k/x.mp4')!;
+    insertThumbnails([
+      { video_id: v.id, frame_index: 0, time_offset: 0, file_path: '/t/0.jpg', kind: 'interval' },
+      { video_id: v.id, frame_index: 1, time_offset: 1, file_path: '/t/1.jpg', kind: 'interval' },
+      { video_id: v.id, frame_index: 101, time_offset: 2.5, file_path: '/t/s1.jpg', kind: 'scene' }
+    ]);
+    const all = getThumbsForVideo(v.id);
+    expect(all).toHaveLength(3);
+    expect(all.find((r) => r.frame_index === 101)?.kind).toBe('scene');
+    expect(all.filter((r) => r.kind === 'interval')).toHaveLength(2);
+
+    const deleted = deleteSceneThumbsForVideo(v.id);
+    expect(deleted).toHaveLength(1);
+    expect(getThumbsForVideo(v.id)).toHaveLength(2);
   });
 });
 

@@ -7,6 +7,7 @@ import {
   getAllUserTagNames,
   getThumbsDir,
   getVideoById,
+  insertScenes,
   listAllFolders,
   listRoots,
   listVideos,
@@ -19,7 +20,10 @@ import {
   setVideoTag
 } from './db';
 import { checkFfmpeg, checkFfprobe } from './ffmpeg';
+import { probeVideo } from './probe';
 import { scanLibrary } from './scanner';
+import { detectScenesFFmpeg } from './scenedetect';
+import { extractSceneThumbs } from './sceneThumbs';
 import { thumbUrl, cacheBustThumbUrl } from './thumbnailer';
 import { attachToWindow as attachViewTracker, setViewedEmitter, startView } from './viewTracker';
 import {
@@ -29,6 +33,7 @@ import {
   openWithPlayer,
   setAccentColor,
   setDefaultPlayer,
+  setSceneSampleRate,
   setTheme
 } from './settings';
 import type {
@@ -39,6 +44,8 @@ import type {
   PlayerChoice,
   ScanProgress,
   ScanResult,
+  SceneProgress,
+  SceneSampleRate,
   Theme,
   VideoViewedEvent,
   VideoWithThumbs
@@ -229,6 +236,10 @@ export function registerIpc(): void {
     setAccentColor(color);
   });
 
+  ipcMain.handle('settings:setSceneSampleRate', async (_e, rate: SceneSampleRate) => {
+    setSceneSampleRate(rate);
+  });
+
   ipcMain.handle(
     'settings:setDefaultPlayer',
     async (_e, player: PlayerChoice, appPath?: string | null) => {
@@ -274,5 +285,80 @@ export function registerIpc(): void {
       name = last.replace(/\.app$/, '');
     }
     return { name, path };
+  });
+
+  ipcMain.handle('video:detectScenes', async (e, id: number) => {
+    const v = getVideoById(id);
+    if (!v) throw new Error('Video not found');
+
+    console.log('[detectScenes] request id=', id, 'path=', v.path);
+
+    const sendProgress = (progress: SceneProgress) => {
+      if (!e.sender.isDestroyed()) {
+        e.sender.send('video:sceneProgress', { videoId: id, progress });
+      }
+    };
+
+    const ff = await checkFfmpeg();
+    if (!ff.ok) {
+      const msg = `ffmpeg is not available. ${ff.installHint ?? 'Install with: brew install ffmpeg'}`;
+      sendProgress({ kind: 'phase', text: msg });
+      sendProgress({ kind: 'error', message: msg });
+      throw new Error(msg);
+    }
+
+    let duration = v.duration;
+    if (!duration) {
+      const probed = await probeVideo(v.path);
+      duration = probed.duration;
+    }
+    if (!duration) {
+      const msg = 'Video duration unknown. Please rescan library.';
+      sendProgress({ kind: 'phase', text: msg });
+      sendProgress({ kind: 'error', message: msg });
+      throw new Error(msg);
+    }
+
+    const { sceneSampleRate } = getSettings();
+
+    try {
+      const scenes = await detectScenesFFmpeg(
+        v.path,
+        duration,
+        v.codec,
+        null,
+        sceneSampleRate,
+        (progress) => sendProgress(progress)
+      );
+      insertScenes(id, scenes);
+      sendProgress({ kind: 'phase', text: 'Extracting scene frames…' });
+      try {
+        await extractSceneThumbs(id, v.content_fingerprint ?? '', v.path, scenes, {
+          onProgress: () => {
+            // Currently a single-shot ffmpeg pass; emit a single phase
+            // tick so the UI knows we're past scene detection.
+          }
+        });
+      } catch (thumbErr) {
+        // Scene-frame extraction is a nice-to-have. Log and continue —
+        // the interval thumbs remain usable, and the scene list is
+        // already persisted to the DB.
+        const tmsg = thumbErr instanceof Error ? thumbErr.message : String(thumbErr);
+        console.warn('[detectScenes] scene frame extraction failed:', tmsg);
+        sendProgress({ kind: 'phase', text: `Scene frames skipped: ${tmsg}` });
+      }
+      sendProgress({
+        kind: 'phase',
+        text: `Done! Found ${scenes.length} scene${scenes.length === 1 ? '' : 's'}.`
+      });
+      sendProgress({ kind: 'done', count: scenes.length });
+      console.log('[detectScenes] done:', scenes.length, 'scenes inserted for id=', id);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error('[detectScenes] failed:', errorMsg);
+      sendProgress({ kind: 'phase', text: `Scene detection failed: ${errorMsg}` });
+      sendProgress({ kind: 'error', message: errorMsg });
+      throw err;
+    }
   });
 }

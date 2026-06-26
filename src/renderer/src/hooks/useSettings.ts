@@ -5,7 +5,14 @@ import {
   isAccentColor,
   variantsFor
 } from '@shared/palette';
-import type { AccentColor, AppSettings, PlayerChoice, PlayerList, Theme } from '@shared/types';
+import type {
+  AccentColor,
+  AppSettings,
+  PlayerChoice,
+  PlayerList,
+  SceneSampleRate,
+  Theme
+} from '@shared/types';
 
 const THEME_STORAGE = 'qf:theme';
 const PLAYER_STORAGE = 'qf:defaultPlayer';
@@ -98,6 +105,7 @@ export interface UseSettings {
     appPath?: string | null
   ) => Promise<void>;
   setAccentColor: (next: AccentColor) => Promise<void>;
+  setSceneSampleRate: (next: SceneSampleRate) => Promise<void>;
   refreshPlayers: () => Promise<void>;
 }
 
@@ -110,7 +118,8 @@ export function useSettings(): UseSettings {
       return {
         theme: cachedTheme ?? 'dark',
         defaultPlayer: cachedPlayer ?? 'system',
-        accentColor: cachedAccent ?? DEFAULT_ACCENT_COLOR
+        accentColor: cachedAccent ?? DEFAULT_ACCENT_COLOR,
+        sceneSampleRate: 'fast'
       };
     }
     return null;
@@ -147,7 +156,7 @@ export function useSettings(): UseSettings {
     setSettings((prev) =>
       prev
         ? { ...prev, theme: next }
-        : { theme: next, defaultPlayer: 'system', accentColor: DEFAULT_ACCENT_COLOR }
+        : { theme: next, defaultPlayer: 'system', accentColor: DEFAULT_ACCENT_COLOR, sceneSampleRate: 'fast' }
     );
     applyTheme(next);
     try {
@@ -162,7 +171,7 @@ export function useSettings(): UseSettings {
       setSettings((prev) =>
         prev
           ? { ...prev, defaultPlayer: next }
-          : { theme: 'dark', defaultPlayer: next, accentColor: DEFAULT_ACCENT_COLOR }
+          : { theme: 'dark', defaultPlayer: next, accentColor: DEFAULT_ACCENT_COLOR, sceneSampleRate: 'fast' }
       );
       saveCachedPlayer(next);
       try {
@@ -178,7 +187,7 @@ export function useSettings(): UseSettings {
     setSettings((prev) =>
       prev
         ? { ...prev, accentColor: next }
-        : { theme: 'dark', defaultPlayer: 'system', accentColor: next }
+        : { theme: 'dark', defaultPlayer: 'system', accentColor: next, sceneSampleRate: 'fast' }
     );
     const theme: Theme = (typeof document !== 'undefined'
       ? (document.documentElement.dataset.theme as Theme | undefined)
@@ -188,6 +197,19 @@ export function useSettings(): UseSettings {
       await api.setAccentColor(next);
     } catch (e) {
       console.error('Failed to persist accent color:', e);
+    }
+  }, []);
+
+  const setSceneSampleRateFn = useCallback(async (next: SceneSampleRate) => {
+    setSettings((prev) =>
+      prev
+        ? { ...prev, sceneSampleRate: next }
+        : { theme: 'dark', defaultPlayer: 'system', accentColor: DEFAULT_ACCENT_COLOR, sceneSampleRate: next }
+    );
+    try {
+      await api.setSceneSampleRate(next);
+    } catch (e) {
+      console.error('Failed to persist scene sample rate:', e);
     }
   }, []);
 
@@ -206,6 +228,7 @@ export function useSettings(): UseSettings {
     setTheme: setThemeFn,
     setDefaultPlayer: setDefaultPlayerFn,
     setAccentColor: setAccentColorFn,
+    setSceneSampleRate: setSceneSampleRateFn,
     refreshPlayers
   };
 }

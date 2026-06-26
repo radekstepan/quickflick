@@ -3,7 +3,7 @@ import { app } from 'electron';
 import { join, dirname } from 'node:path';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { thumbsDirFor } from './thumbnailer';
-import type { VideoBase, Thumbnail, VideoWithThumbs, SortKey } from '../shared/types';
+import type { VideoBase, Thumbnail, VideoWithThumbs, VideoScene, SortKey } from '../shared/types';
 
 export type ThumbStatus = 'pending' | 'ok' | 'failed';
 
@@ -21,7 +21,19 @@ let thumbsDirOverride: string | null = null;
 // can be replayed in any of those contexts: the index name is shared with
 // the old (renamed) table during migration, so we must not assert
 // uniqueness.
-const SUPPORTING_TABLE_SCHEMAS: Array<{ name: string; ddl: string; indexes: string[] }> = [
+//
+// `legacyCopyColumns` lists the source columns to project when copying
+// rows from a renamed `${name}_old` table back into the freshly-created
+// table. It must be a non-decreasing subset of the source's actual
+// columns; any new column on the destination picks up its DEFAULT for
+// free. Set to `null` to fall back to `SELECT *` (used for tables whose
+// schema has not changed).
+const SUPPORTING_TABLE_SCHEMAS: Array<{
+  name: string;
+  ddl: string;
+  indexes: string[];
+  legacyCopyColumns: string[] | null;
+}> = [
   {
     name: 'thumbnails',
     ddl: `CREATE TABLE IF NOT EXISTS thumbnails (
@@ -30,9 +42,11 @@ const SUPPORTING_TABLE_SCHEMAS: Array<{ name: string; ddl: string; indexes: stri
       frame_index INTEGER NOT NULL,
       time_offset REAL    NOT NULL,
       file_path   TEXT    NOT NULL,
+      kind        TEXT    NOT NULL DEFAULT 'interval' CHECK(kind IN ('interval', 'scene')),
       UNIQUE(video_id, frame_index)
     )`,
-    indexes: ['CREATE INDEX IF NOT EXISTS idx_thumbnails_video ON thumbnails(video_id)']
+    indexes: ['CREATE INDEX IF NOT EXISTS idx_thumbnails_video ON thumbnails(video_id)'],
+    legacyCopyColumns: ['id', 'video_id', 'frame_index', 'time_offset', 'file_path']
   },
   {
     name: 'video_tags',
@@ -42,7 +56,8 @@ const SUPPORTING_TABLE_SCHEMAS: Array<{ name: string; ddl: string; indexes: stri
       created_at INTEGER NOT NULL,
       PRIMARY KEY (video_id, tag_name)
     )`,
-    indexes: ['CREATE INDEX IF NOT EXISTS idx_video_tags_name ON video_tags(tag_name)']
+    indexes: ['CREATE INDEX IF NOT EXISTS idx_video_tags_name ON video_tags(tag_name)'],
+    legacyCopyColumns: null
   },
   {
     name: 'video_excluded_tags',
@@ -52,7 +67,21 @@ const SUPPORTING_TABLE_SCHEMAS: Array<{ name: string; ddl: string; indexes: stri
       created_at INTEGER NOT NULL,
       PRIMARY KEY (video_id, tag_name)
     )`,
-    indexes: ['CREATE INDEX IF NOT EXISTS idx_video_excluded_tags_name ON video_excluded_tags(tag_name)']
+    indexes: ['CREATE INDEX IF NOT EXISTS idx_video_excluded_tags_name ON video_excluded_tags(tag_name)'],
+    legacyCopyColumns: null
+  },
+  {
+    name: 'video_scenes',
+    ddl: `CREATE TABLE IF NOT EXISTS video_scenes (
+      id             INTEGER PRIMARY KEY,
+      video_id       INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+      scene_index    INTEGER NOT NULL,
+      start_time_sec REAL    NOT NULL,
+      end_time_sec   REAL    NOT NULL,
+      UNIQUE(video_id, scene_index)
+    )`,
+    indexes: ['CREATE INDEX IF NOT EXISTS idx_video_scenes_video ON video_scenes(video_id)'],
+    legacyCopyColumns: null
   }
 ];
 
@@ -171,6 +200,13 @@ export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void
     db.exec(t.ddl);
     for (const idx of t.indexes) db.exec(idx);
   }
+
+  // Bring the `thumbnails` table to the current schema. Pre-existing DBs
+  // lack the `kind` column; we add it with the historical default of
+  // 'interval' (every row written by older builds is an interval frame).
+  if (hasTable(db, 'thumbnails') && !hasColumn(db, 'thumbnails', 'kind')) {
+    db.exec("ALTER TABLE thumbnails ADD COLUMN kind TEXT NOT NULL DEFAULT 'interval'");
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS library_roots (
       path     TEXT PRIMARY KEY,
@@ -266,7 +302,15 @@ function ensureVideosSchema(): void {
     for (const t of SUPPORTING_TABLE_SCHEMAS) {
       if (!hasTable(db!, `${t.name}_old`)) continue;
       db!.exec(t.ddl);
-      db!.exec(`INSERT INTO ${t.name} SELECT * FROM ${t.name}_old`);
+      if (t.legacyCopyColumns) {
+        // Spell out the legacy columns explicitly. The destination may
+        // have gained new columns (e.g. `kind` on `thumbnails`) after
+        // the `_old` table was written — those pick up their DEFAULT.
+        const cols = t.legacyCopyColumns.join(', ');
+        db!.exec(`INSERT INTO ${t.name} (${cols}) SELECT ${cols} FROM ${t.name}_old`);
+      } else {
+        db!.exec(`INSERT INTO ${t.name} SELECT * FROM ${t.name}_old`);
+      }
       for (const idx of t.indexes) db!.exec(idx);
       db!.exec(`DROP TABLE ${t.name}_old`);
     }
@@ -630,11 +674,13 @@ function hydrateVideoWithRelations(base: VideoBase): VideoWithThumbs {
     )
     .all(base.id) as { tag_name: string }[];
   const thumbnails = getThumbsForVideo(base.id);
+  const scenes = getScenesForVideo(base.id);
   return {
     ...base,
     tags: tagRows.map((r) => r.tag_name),
     excludedTags: excludedRows.map((r) => r.tag_name),
-    thumbnails
+    thumbnails,
+    scenes
   };
 }
 
@@ -738,11 +784,23 @@ export function listVideos(opts: { folder?: string; search?: string; sort?: Sort
     excludedByVideo.set(t.video_id, arr);
   }
 
+  const sceneRows = getDb()
+    .prepare(`SELECT * FROM video_scenes WHERE video_id IN (${placeholders}) ORDER BY video_id, start_time_sec`)
+    .all(...ids) as VideoScene[];
+
+  const scenesByVideo = new Map<number, VideoScene[]>();
+  for (const s of sceneRows) {
+    const arr = scenesByVideo.get(s.video_id) ?? [];
+    arr.push(s);
+    scenesByVideo.set(s.video_id, arr);
+  }
+
   return rows.map((v) => ({
     ...v,
     thumbnails: byVideo.get(v.id) ?? [],
     tags: tagsByVideo.get(v.id) ?? [],
-    excludedTags: excludedByVideo.get(v.id) ?? []
+    excludedTags: excludedByVideo.get(v.id) ?? [],
+    scenes: scenesByVideo.get(v.id) ?? []
   }));
 }
 
@@ -761,11 +819,12 @@ export function removeStaleVideos(validPaths: Set<string>): number {
 export function insertThumbnails(rows: Omit<Thumbnail, 'id'>[]): void {
   if (rows.length === 0) return;
   const stmt = getDb().prepare(`
-    INSERT INTO thumbnails (video_id, frame_index, time_offset, file_path)
-    VALUES (@video_id, @frame_index, @time_offset, @file_path)
+    INSERT INTO thumbnails (video_id, frame_index, time_offset, file_path, kind)
+    VALUES (@video_id, @frame_index, @time_offset, @file_path, @kind)
     ON CONFLICT(video_id, frame_index) DO UPDATE SET
       time_offset = excluded.time_offset,
-      file_path = excluded.file_path
+      file_path = excluded.file_path,
+      kind = excluded.kind
   `);
   const tx = getDb().transaction((batch: Omit<Thumbnail, 'id'>[]) => {
     for (const r of batch) stmt.run(r);
@@ -780,10 +839,25 @@ export function deleteThumbnailsForVideo(videoId: number): number {
   return result.changes;
 }
 
+export function deleteSceneThumbsForVideo(videoId: number): Thumbnail[] {
+  const dbi = getDb();
+  const existing = dbi
+    .prepare("SELECT * FROM thumbnails WHERE video_id = ? AND kind = 'scene'")
+    .all(videoId) as Thumbnail[];
+  dbi.prepare("DELETE FROM thumbnails WHERE video_id = ? AND kind = 'scene'").run(videoId);
+  return existing;
+}
+
 export function getThumbsForVideo(videoId: number): Thumbnail[] {
   return getDb()
     .prepare('SELECT * FROM thumbnails WHERE video_id = ? ORDER BY frame_index')
     .all(videoId) as Thumbnail[];
+}
+
+export function getScenesForVideo(videoId: number): VideoScene[] {
+  return getDb()
+    .prepare('SELECT * FROM video_scenes WHERE video_id = ? ORDER BY start_time_sec')
+    .all(videoId) as VideoScene[];
 }
 
 export function setVideoTag(videoId: number, tagName: string): void {
@@ -843,4 +917,23 @@ export function getAllUserTagNames(): string[] {
       .prepare('SELECT DISTINCT tag_name FROM video_tags ORDER BY tag_name')
       .all() as { tag_name: string }[]
   ).map((r) => r.tag_name);
+}
+
+export function insertScenes(
+  videoId: number,
+  scenes: Array<{ start: number; end: number }>
+): void {
+  console.log('[insertScenes] videoId=', videoId, 'count=', scenes.length);
+  const dbi = getDb();
+  const stmt = dbi.prepare(`
+    INSERT INTO video_scenes (video_id, scene_index, start_time_sec, end_time_sec)
+    VALUES (?, ?, ?, ?)
+  `);
+  const tx = dbi.transaction(() => {
+    dbi.prepare('DELETE FROM video_scenes WHERE video_id = ?').run(videoId);
+    scenes.forEach((s, i) => {
+      stmt.run(videoId, i + 1, s.start, s.end);
+    });
+  });
+  tx();
 }

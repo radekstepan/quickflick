@@ -12,6 +12,8 @@ import type {
   ScanProgress,
   FfmpegStatus,
   ScanResult,
+  SceneProgressEvent,
+  SceneSampleRate,
   Theme,
   VideoViewedEvent,
   VideoWithThumbs,
@@ -66,10 +68,18 @@ const api: Api = {
     ipcRenderer.invoke('settings:setTheme', theme) as Promise<void>,
   setAccentColor: (color: AccentColor) =>
     ipcRenderer.invoke('settings:setAccent', color) as Promise<void>,
+  setSceneSampleRate: (rate: SceneSampleRate) =>
+    ipcRenderer.invoke('settings:setSceneSampleRate', rate) as Promise<void>,
   setDefaultPlayer: (player: PlayerChoice, appPath?: string | null) =>
     ipcRenderer.invoke('settings:setDefaultPlayer', player, appPath) as Promise<void>,
   listPlayers: () => ipcRenderer.invoke('settings:listPlayers') as Promise<PlayerList>,
-  pickApp: () => ipcRenderer.invoke('settings:pickApp') as Promise<PickedApp | null>
+  pickApp: () => ipcRenderer.invoke('settings:pickApp') as Promise<PickedApp | null>,
+  detectScenes: (id) => ipcRenderer.invoke('video:detectScenes', id) as Promise<void>,
+  onSceneProgress: (cb) => {
+    const listener = (_e: unknown, event: SceneProgressEvent) => cb(event);
+    ipcRenderer.on('video:sceneProgress', listener);
+    return () => ipcRenderer.removeListener('video:sceneProgress', listener);
+  }
 };
 
 contextBridge.exposeInMainWorld('api', api);

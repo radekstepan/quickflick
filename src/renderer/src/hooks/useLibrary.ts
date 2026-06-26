@@ -5,6 +5,8 @@ import type {
   OpenResult,
   ScanProgress,
   ScanResult,
+  SceneProgress,
+  SceneProgressEvent,
   ThumbnailFailure,
   VideoWithThumbs
 } from '@shared/types';
@@ -21,6 +23,7 @@ export interface LibraryState {
   isScanning: boolean;
   scanProgress: ScanProgress | null;
   thumbFailures: ThumbnailFailure[];
+  sceneProgress: { videoId: number; progress: SceneProgress } | null;
   addFolder: () => Promise<void>;
   removeFolder: (path: string) => Promise<void>;
   rescan: () => Promise<void>;
@@ -34,6 +37,7 @@ export interface LibraryState {
   unhideAllTags: () => void;
   setVideoTag: (videoId: number, tagName: string) => Promise<void>;
   removeVideoTag: (videoId: number, tagName: string) => Promise<void>;
+  detectScenes: (id: number) => Promise<void>;
 }
 
 function isSubPathOrEqual(child: string, parent: string): boolean {
@@ -72,6 +76,7 @@ export function useLibrary(): LibraryState {
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [thumbFailures, setThumbFailures] = useState<ThumbnailFailure[]>([]);
+  const [sceneProgress, setSceneProgress] = useState<{ videoId: number; progress: SceneProgress } | null>(null);
   const [userTagNames, setUserTagNames] = useState<string[]>([]);
 
   const hideTag = useCallback((name: string) => {
@@ -259,6 +264,15 @@ export function useLibrary(): LibraryState {
     }
   }, []);
 
+  const detectScenes = useCallback(async (id: number) => {
+    try {
+      await api.detectScenes(id);
+      await reload();
+    } catch (e) {
+      console.error('Scene detection failed:', e);
+    }
+  }, [reload]);
+
   const onVideoOpened = useCallback((result: OpenResult) => {
     if (result.usedFallback && result.error) {
       showOpenToast(
@@ -354,10 +368,21 @@ export function useLibrary(): LibraryState {
         return next;
       });
     });
+    const unsubScene = api.onSceneProgress((event: SceneProgressEvent) => {
+      if (event.progress.kind === 'done' || event.progress.kind === 'error') {
+        setSceneProgress(null);
+        if (event.progress.kind === 'error') {
+          showOpenToast(`Scene detection failed: ${event.progress.message}`);
+        }
+        return;
+      }
+      setSceneProgress(event);
+    });
     return () => {
       unsubDiscovered();
       unsubThumbed();
       unsubViewed();
+      unsubScene();
     };
   }, []);
 
@@ -381,6 +406,7 @@ export function useLibrary(): LibraryState {
     isScanning,
     scanProgress,
     thumbFailures,
+    sceneProgress,
     addFolder,
     removeFolder,
     rescan,
@@ -393,6 +419,7 @@ export function useLibrary(): LibraryState {
     unhideTag,
     unhideAllTags,
     setVideoTag,
-    removeVideoTag
+    removeVideoTag,
+    detectScenes
   };
 }

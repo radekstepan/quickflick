@@ -24,16 +24,28 @@ export interface Video extends VideoBase {
   excludedTags: string[];
 }
 
+export type ThumbKind = 'interval' | 'scene';
+
 export interface Thumbnail {
   id: number;
   video_id: number;
   frame_index: number;
   time_offset: number;
   file_path: string;
+  kind: ThumbKind;
 }
 
 export interface VideoWithThumbs extends Video {
   thumbnails: Thumbnail[];
+  scenes?: VideoScene[];
+}
+
+export interface VideoScene {
+  id: number;
+  video_id: number;
+  scene_index: number;
+  start_time_sec: number;
+  end_time_sec: number;
 }
 
 export interface ScanProgress {
@@ -119,7 +131,10 @@ export interface AppSettings {
   theme: Theme;
   defaultPlayer: PlayerChoice;
   accentColor: AccentColor;
+  sceneSampleRate: SceneSampleRate;
 }
+
+export type SceneSampleRate = 'every-frame' | 'fast' | 'quick' | 'sketch';
 
 export interface PlayerList {
   installed: string[];
@@ -161,7 +176,21 @@ export interface Api {
   getSettings: () => Promise<AppSettings>;
   setTheme: (theme: Theme) => Promise<void>;
   setAccentColor: (color: AccentColor) => Promise<void>;
+  setSceneSampleRate: (rate: SceneSampleRate) => Promise<void>;
   setDefaultPlayer: (player: PlayerChoice, appPath?: string | null) => Promise<void>;
   listPlayers: () => Promise<PlayerList>;
   pickApp: () => Promise<PickedApp | null>;
+  detectScenes: (id: number) => Promise<void>;
+  onSceneProgress: (cb: (event: SceneProgressEvent) => void) => () => void;
+}
+
+export type SceneProgress =
+  | { kind: 'phase'; text: string }
+  | { kind: 'frame'; frame: number; fps: number; percent: number }
+  | { kind: 'done'; count: number }
+  | { kind: 'error'; message: string };
+
+export interface SceneProgressEvent {
+  videoId: number;
+  progress: SceneProgress;
 }

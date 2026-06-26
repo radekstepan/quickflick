@@ -19,6 +19,7 @@ import {
   setTheme,
   setAccentColor,
   setDefaultPlayer,
+  setSceneSampleRate,
   readKv,
   writeKv,
   listInstalledPlayers,
@@ -109,6 +110,28 @@ describe('settings storage', () => {
   it('falls back to red for unknown accentColor values', () => {
     writeKv('settings:accentColor', 'neon');
     expect(getSettings().accentColor).toBe('red');
+  });
+
+  it('returns sceneSampleRate=fast by default', () => {
+    const s = getSettings();
+    expect(s.sceneSampleRate).toBe('fast');
+    expect(DEFAULT_SETTINGS.sceneSampleRate).toBe('fast');
+  });
+
+  it('persists and reads sceneSampleRate', () => {
+    setSceneSampleRate('quick');
+    expect(getSettings().sceneSampleRate).toBe('quick');
+    setSceneSampleRate('every-frame');
+    expect(getSettings().sceneSampleRate).toBe('every-frame');
+    setSceneSampleRate('sketch');
+    expect(getSettings().sceneSampleRate).toBe('sketch');
+    setSceneSampleRate('fast');
+    expect(getSettings().sceneSampleRate).toBe('fast');
+  });
+
+  it('falls back to fast for unknown sceneSampleRate values', () => {
+    writeKv('settings:sceneSampleRate', 'turbo');
+    expect(getSettings().sceneSampleRate).toBe('fast');
   });
 });
 

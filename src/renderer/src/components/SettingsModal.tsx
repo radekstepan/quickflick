@@ -6,7 +6,8 @@ import type {
   AccentColor,
   AppSettings,
   PlayerChoice,
-  PlayerList
+  PlayerList,
+  SceneSampleRate
 } from '@shared/types';
 
 interface Props {
@@ -18,6 +19,7 @@ interface Props {
     appPath?: string | null
   ) => void;
   onSetAccentColor: (color: AccentColor) => void;
+  onSetSceneSampleRate: (rate: SceneSampleRate) => void;
   onPlayersChanged: () => void;
 }
 
@@ -41,12 +43,26 @@ const KNOWN_OPTIONS: PlayerOption[] = [
   { value: 'MPV', label: 'MPV' }
 ];
 
+interface SceneRateOption {
+  value: SceneSampleRate;
+  label: string;
+  hint: string;
+}
+
+const SCENE_RATE_OPTIONS: SceneRateOption[] = [
+  { value: 'every-frame', label: 'Every frame', hint: '±0s · slowest' },
+  { value: 'fast', label: 'Fast', hint: '±0.5s · recommended' },
+  { value: 'quick', label: 'Quick', hint: '±5s · long content' },
+  { value: 'sketch', label: 'Sketch', hint: '±30s · rough' }
+];
+
 export function SettingsModal({
   settings,
   players,
   onClose,
   onSetDefaultPlayer,
   onSetAccentColor,
+  onSetSceneSampleRate,
   onPlayersChanged
 }: Props) {
   const [playerOpen, setPlayerOpen] = useState(false);
@@ -114,6 +130,7 @@ export function SettingsModal({
   const resetDefaults = () => {
     onSetDefaultPlayer('system', null);
     onSetAccentColor('red');
+    onSetSceneSampleRate('fast');
   };
 
   return createPortal(
@@ -232,6 +249,40 @@ export function SettingsModal({
           </div>
           <div className="settings-subtext">
             Recolors highlights, focus rings, and the active selection across the app.
+          </div>
+        </div>
+
+        <div className="settings-divider" />
+
+        <div className="settings-section">
+          <div className="settings-section-label">Scene detection speed</div>
+          <div
+            className="settings-scene-rate-row"
+            role="radiogroup"
+            aria-label="Scene detection sample rate"
+          >
+            {SCENE_RATE_OPTIONS.map((opt) => {
+              const isActive = opt.value === settings.sceneSampleRate;
+              return (
+                <button
+                  type="button"
+                  key={opt.value}
+                  role="radio"
+                  aria-checked={isActive}
+                  className={`settings-scene-rate-option${
+                    isActive ? ' active' : ''
+                  }`}
+                  onClick={() => onSetSceneSampleRate(opt.value)}
+                  title={`${opt.label} — ${opt.hint}`}
+                >
+                  <span className="settings-scene-rate-label">{opt.label}</span>
+                  <span className="settings-scene-rate-hint">{opt.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="settings-subtext">
+            Lower = faster but coarser. 1 frame per second is enough for movies and TV.
           </div>
         </div>
 

@@ -3,18 +3,37 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { readKv, writeKv } from './db';
 import { DEFAULT_ACCENT_COLOR, isAccentColor } from '../shared/palette';
-import type { AccentColor, AppSettings, PlayerChoice, Theme } from '../shared/types';
+import type {
+  AccentColor,
+  AppSettings,
+  PlayerChoice,
+  SceneSampleRate,
+  Theme
+} from '../shared/types';
 
 const THEME_KEY = 'settings:theme';
 const PLAYER_KEY = 'settings:defaultPlayer';
 const CUSTOM_PLAYER_PATH_KEY = 'settings:defaultPlayerPath';
 const ACCENT_KEY = 'settings:accentColor';
+const SCENE_SAMPLE_RATE_KEY = 'settings:sceneSampleRate';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   defaultPlayer: 'system',
-  accentColor: DEFAULT_ACCENT_COLOR
+  accentColor: DEFAULT_ACCENT_COLOR,
+  sceneSampleRate: 'fast'
 };
+
+const SCENE_SAMPLE_RATES: ReadonlyArray<SceneSampleRate> = [
+  'every-frame',
+  'fast',
+  'quick',
+  'sketch'
+];
+
+function isSceneSampleRate(v: string | null): v is SceneSampleRate {
+  return v !== null && (SCENE_SAMPLE_RATES as ReadonlyArray<string>).includes(v);
+}
 
 interface PlayerSpec {
   name: string;
@@ -68,6 +87,11 @@ function readCustomPlayerPath(): string | null {
   return readKv(CUSTOM_PLAYER_PATH_KEY);
 }
 
+function readSceneSampleRate(): SceneSampleRate {
+  const raw = readKv(SCENE_SAMPLE_RATE_KEY);
+  return isSceneSampleRate(raw) ? raw : DEFAULT_SETTINGS.sceneSampleRate;
+}
+
 export function getSettings(): AppSettings {
   const theme = readTheme();
   const accentColor = readAccentColor();
@@ -84,7 +108,8 @@ export function getSettings(): AppSettings {
   return {
     theme,
     defaultPlayer,
-    accentColor
+    accentColor,
+    sceneSampleRate: readSceneSampleRate()
   };
 }
 
@@ -98,6 +123,10 @@ export function setTheme(theme: Theme): void {
 
 export function setAccentColor(color: AccentColor): void {
   writeKv(ACCENT_KEY, color);
+}
+
+export function setSceneSampleRate(rate: SceneSampleRate): void {
+  writeKv(SCENE_SAMPLE_RATE_KEY, rate);
 }
 
 export function setDefaultPlayer(player: PlayerChoice, appPath?: string | null): void {

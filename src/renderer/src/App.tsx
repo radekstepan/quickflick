@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toolbar, ScanProgressOverlay } from './components/Toolbar';
+import { SceneProgressOverlay } from './components/SceneProgressOverlay';
 import { Sidebar } from './components/Sidebar';
 import { VideoGrid } from './components/VideoGrid';
 import { GroupedVideoGrid, type VideoGroup } from './components/GroupedVideoGrid';
@@ -435,6 +436,7 @@ export default function App() {
 
       <div className="main">
         <ScanProgressOverlay progress={lib.scanProgress} />
+        <SceneProgressOverlay progress={lib.sceneProgress} />
         {lib.videos.length === 0 || displayVideos.length === 0 ? (
           <EmptyState
             hasLibrary={lib.roots.length > 0}
@@ -454,6 +456,7 @@ export default function App() {
             getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
+            onDetectScenes={lib.detectScenes}
             resetScrollKey={resetScrollKey}
           />
         ) : (
@@ -466,6 +469,7 @@ export default function App() {
             getViewCount={getDisplayViewCount}
             onAddTag={lib.setVideoTag}
             onRemoveTag={lib.removeVideoTag}
+            onDetectScenes={lib.detectScenes}
             resetScrollKey={resetScrollKey}
           />
         )}
@@ -485,6 +489,7 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onSetDefaultPlayer={settingsState.setDefaultPlayer}
           onSetAccentColor={settingsState.setAccentColor}
+          onSetSceneSampleRate={settingsState.setSceneSampleRate}
           onPlayersChanged={settingsState.refreshPlayers}
         />
       ) : null}

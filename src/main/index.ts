@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell, protocol, net, Menu, MenuItemConstructorOpti
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { access } from 'node:fs/promises';
+import { rmSync, existsSync } from 'node:fs';
 import { initDb, closeDb, addRoot, getDbPath, getThumbsDir, listAllVideos } from './db';
 import { registerIpc, setMainWindow, getMainWindow } from './ipc';
 import { scanLibrary } from './scanner';
@@ -154,6 +155,17 @@ async function runSmokeTest(folder: string): Promise<void> {
   app.exit(0);
 }
 
+function cleanupLegacyVenv(): void {
+  const venv = join(app.getPath('userData'), 'venv');
+  if (!existsSync(venv)) return;
+  try {
+    rmSync(venv, { recursive: true, force: true });
+    console.log('[cleanup] removed legacy PySceneDetect venv at', venv);
+  } catch (e) {
+    console.warn('[cleanup] failed to remove legacy venv:', e);
+  }
+}
+
 app.setName('QuickFlick');
 
 app.whenReady().then(() => {
@@ -190,6 +202,7 @@ app.whenReady().then(() => {
   }
 
   initDb();
+  cleanupLegacyVenv();
   registerIpc();
   buildAppMenu();
 

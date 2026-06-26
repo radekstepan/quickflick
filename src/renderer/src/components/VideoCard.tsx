@@ -6,7 +6,9 @@ import { api } from '../api';
 import { displayName } from '../utils/displayName';
 import { getMatchingTags, type Tag } from '../utils/tags';
 import { formatViewsWithTime } from '../utils/formatViewTime';
+import { buildCycleFrames } from '../utils/cycleFrames';
 import { TagPickerModal } from './TagPickerModal';
+import { SampleGridModal } from './SampleGridModal';
 import type { OpenResult, VideoWithThumbs } from '@shared/types';
 
 interface Props {
@@ -17,6 +19,7 @@ interface Props {
   onOpened?: (result: OpenResult) => void;
   onAddTag: (id: number, name: string) => void;
   onRemoveTag: (id: number, name: string) => void;
+  onDetectScenes?: (id: number) => Promise<void> | void;
 }
 
 export function formatDuration(seconds: number | null): string {
@@ -45,15 +48,20 @@ export function viewsLabel(viewCount: number, viewTimeMs: number): string {
   return formatViewsWithTime(viewCount, viewTimeMs);
 }
 
-export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRemoveTag }: Props) {
-  const urls = useMemo(
+export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRemoveTag, onDetectScenes }: Props) {
+  const cycleFrames = useMemo(
     () =>
-      video.thumbnails
-        .slice()
-        .sort((a, b) => a.frame_index - b.frame_index)
-        .slice(1)
-        .map((t) => (t as { url?: string }).url ?? `file://${t.file_path}`),
-    [video.thumbnails]
+      buildCycleFrames(
+        video.thumbnails,
+        video.scenes ?? [],
+        video.duration ?? 0
+      ),
+    [video.thumbnails, video.scenes, video.duration]
+  );
+
+  const urls = useMemo(
+    () => cycleFrames.map((f) => (f.thumbnail as { url?: string }).url ?? `file://${f.thumbnail.file_path}`),
+    [cycleFrames]
   );
 
   const loaded = usePreloadedImages(urls);
@@ -123,6 +131,7 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
 
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [samplesOpen, setSamplesOpen] = useState(false);
 
   useEffect(() => {
     if (!menu) return;
@@ -242,6 +251,48 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
                 </span>
                 <span>Edit tags</span>
               </button>
+              <div className="context-menu-separator" />
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  onDetectScenes?.(video.id);
+                }}
+              >
+                <span className="context-menu-icon" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+                    <line x1="7" y1="2" x2="7" y2="22"></line>
+                    <line x1="17" y1="2" x2="17" y2="22"></line>
+                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                    <line x1="2" y1="7" x2="7" y2="7"></line>
+                    <line x1="2" y1="17" x2="7" y2="17"></line>
+                    <line x1="17" y1="17" x2="22" y2="17"></line>
+                    <line x1="17" y1="7" x2="22" y2="7"></line>
+                  </svg>
+                </span>
+                <span>Detect Scenes</span>
+              </button>
+              <div className="context-menu-separator" />
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  setSamplesOpen(true);
+                }}
+              >
+                <span className="context-menu-icon" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </span>
+                <span>Show 8 samples</span>
+              </button>
             </div>,
             document.body
           )
@@ -256,6 +307,18 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
               onAdd={(name) => onAddTag(video.id, name)}
               onRemove={(name) => onRemoveTag(video.id, name)}
               onClose={() => setPickerOpen(false)}
+            />,
+            document.body
+          )
+        : null}
+      {samplesOpen
+        ? createPortal(
+            <SampleGridModal
+              videoName={displayName(video.filename, video.folder, roots)}
+              durationSec={video.duration ?? 0}
+              cycleFrames={cycleFrames}
+              scenes={video.scenes ?? []}
+              onClose={() => setSamplesOpen(false)}
             />,
             document.body
           )

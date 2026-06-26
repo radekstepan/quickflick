@@ -298,7 +298,8 @@ async function ensureThumbnailRows(
     video_id: videoId,
     frame_index: idx,
     time_offset: idx * interval,
-    file_path: join(outDir, f)
+    file_path: join(outDir, f),
+    kind: 'interval'
   }));
   insertThumbnails(rows);
 }
@@ -350,7 +351,8 @@ export async function generateThumbnails(
         video_id: videoId,
         frame_index: idx,
         time_offset: idx * interval,
-        file_path: join(outDir, f)
+        file_path: join(outDir, f),
+        kind: 'interval'
       }));
       insertThumbnails(rows);
       onProgress?.(rows.length);
@@ -393,6 +395,15 @@ export async function generateThumbnails(
 
 export function frameCount(): number {
   return FRAME_COUNT;
+}
+
+// Scene-derived thumbnails reserve a separate `frame_index` range so they
+// can't collide with the 0..FRAME_COUNT-1 range used by interval thumbs,
+// while still satisfying the UNIQUE(video_id, frame_index) constraint.
+export const SCENE_FRAME_INDEX_OFFSET = 100;
+
+export function sceneFrameIndex(sceneIndex1Based: number): number {
+  return SCENE_FRAME_INDEX_OFFSET + sceneIndex1Based;
 }
 
 // Convert an absolute thumbnail file path to a qfthumb:// URL for the renderer.

@@ -17,6 +17,7 @@ interface Props {
   getViewCount: (id: number, fallback: number) => number;
   onAddTag: (id: number, name: string) => void;
   onRemoveTag: (id: number, name: string) => void;
+  onDetectScenes: (id: number) => Promise<void>;
   resetScrollKey: string;
 }
 
@@ -29,7 +30,7 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function GroupedVideoGrid({ groups, roots, tags, onOpen, onOpened, getViewCount, onAddTag, onRemoveTag, resetScrollKey }: Props) {
+export function GroupedVideoGrid({ groups, roots, tags, onOpen, onOpened, getViewCount, onAddTag, onRemoveTag, onDetectScenes, resetScrollKey }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(1);
 
@@ -70,6 +71,7 @@ export function GroupedVideoGrid({ groups, roots, tags, onOpen, onOpened, getVie
                 onOpened={onOpened}
                 onAddTag={onAddTag}
                 onRemoveTag={onRemoveTag}
+                onDetectScenes={onDetectScenes}
               />
             ))}
           </div>

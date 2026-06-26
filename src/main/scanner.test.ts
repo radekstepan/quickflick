@@ -298,7 +298,8 @@ describe('_reconcile', () => {
         video_id: oldId,
         frame_index: i,
         time_offset: i,
-        file_path: `/thumbs/${fp}/thumb_${String(i + 1).padStart(3, '0')}.jpg`
+        file_path: `/thumbs/${fp}/thumb_${String(i + 1).padStart(3, '0')}.jpg`,
+        kind: 'interval' as const
       }))
     );
 
