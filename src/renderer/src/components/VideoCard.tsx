@@ -51,7 +51,6 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
       video.thumbnails
         .slice()
         .sort((a, b) => a.frame_index - b.frame_index)
-        .slice(1)
         .map((t) => (t as { url?: string }).url ?? `file://${t.file_path}`),
     [video.thumbnails]
   );

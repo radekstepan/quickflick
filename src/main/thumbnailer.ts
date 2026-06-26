@@ -56,9 +56,11 @@ function buildCandidates(
     if (seen.has(label)) return;
     seen.add(label);
 
+    // Sample at (i + 0.5) * interval instead of i * interval to skip the
+    // 0:00 frame — typically black/intro and not useful for previewing.
     const perInputSeek: number[] = [];
     for (let i = 0; i < FRAME_COUNT; i++) {
-      const natural = i * interval;
+      const natural = (i + 0.5) * interval;
       const clamped = Math.min(natural, Math.max(0, durationSec - 0.5));
       perInputSeek.push(clamped);
     }
@@ -297,7 +299,7 @@ async function ensureThumbnailRows(
   const rows: Omit<Thumbnail, 'id'>[] = sorted.slice(0, FRAME_COUNT).map((f, idx) => ({
     video_id: videoId,
     frame_index: idx,
-    time_offset: idx * interval,
+    time_offset: (idx + 0.5) * interval,
     file_path: join(outDir, f)
   }));
   insertThumbnails(rows);
@@ -349,7 +351,7 @@ export async function generateThumbnails(
       const rows: Omit<Thumbnail, 'id'>[] = result.files.map((f, idx) => ({
         video_id: videoId,
         frame_index: idx,
-        time_offset: idx * interval,
+        time_offset: (idx + 0.5) * interval,
         file_path: join(outDir, f)
       }));
       insertThumbnails(rows);

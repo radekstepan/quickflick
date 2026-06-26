@@ -11,6 +11,11 @@ const DB_FILENAME = 'library.db';
 const LEGACY_DB_FILENAME = 'cache.db';
 const BACKUP_RETAIN = 7;
 
+// Bumped whenever the thumbnailer changes its seek formula, so that existing
+// on-disk caches (and stale `time_offset` rows) are invalidated exactly once.
+const THUMBS_SEEK_VERSION = 'half-slot-v1';
+const THUMBS_SEEK_VERSION_KEY = 'thumbs:seekVersion';
+
 let db: Database.Database | null = null;
 let thumbsDirOverride: string | null = null;
 
@@ -208,6 +213,33 @@ export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void
       db.prepare("DELETE FROM kv WHERE key = 'library'").run();
     }
   }
+
+  runThumbsSeekVersionMigration();
+}
+
+// One-shot migration: when the thumbnailer changes its seek formula, the
+// JPEGs in thumbs/<hash>/ and the `time_offset` rows in the `thumbnails`
+// table still reflect the old formula. Wipe both, re-queue every video,
+// and record the new seek version so this never runs again. The version
+// key is written LAST so a transient failure in the earlier steps retries
+// on the next launch instead of silently corrupting the cache.
+function runThumbsSeekVersionMigration(): void {
+  if (readKv(THUMBS_SEEK_VERSION_KEY) === THUMBS_SEEK_VERSION) return;
+
+  getDb().exec('DELETE FROM thumbnails');
+  getDb().exec(
+    "UPDATE videos SET thumb_status = 'pending' WHERE thumb_status IN ('ok', 'failed')"
+  );
+  try {
+    rmSync(getThumbsDir(), { recursive: true, force: true });
+  } catch {
+    // best-effort; the DB reset above is the important half
+  }
+  writeKv(THUMBS_SEEK_VERSION_KEY, THUMBS_SEEK_VERSION);
+
+  console.log(
+    '[thumbs] seek-version migration: cleared thumbs cache, re-queuing all videos'
+  );
 }
 
 function ensureVideosSchema(): void {
