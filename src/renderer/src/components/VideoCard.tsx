@@ -183,7 +183,13 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
           {video.width && video.height ? <span className="dot" /> : null}
           <span>{formatSize(video.size)}</span>
           <span className="dot" />
-          <span data-testid="views-label">{formatViewsWithTime(video.view_count, video.view_time_ms ?? 0)}</span>
+          {video.view_count === 0 ? (
+            <span className="card-sub-new" data-testid="new-label">new</span>
+          ) : (
+            <span data-testid="views-label">
+              {formatViewsWithTime(video.view_count, video.view_time_ms ?? 0)}
+            </span>
+          )}
         </div>
       </div>
       {menu
