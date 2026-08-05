@@ -179,6 +179,34 @@ export function getMatchingTags(
   return matches;
 }
 
+// Count, per tag name, the number of videos that would be shown when the
+// tag is selected. Uses the same videoMatchesTag predicate as the click
+// filter, so the sidebar count and the filtered view can never drift out
+// of sync (the previous implementation only counted explicit user tags
+// for tags that weren't auto-detected, which under-reported counts for
+// tags like "Alura Jenson" that auto-match via folder/filename segments).
+export function countVideosByTag(
+  videos: ReadonlyArray<{
+    filename: string;
+    folder: string;
+    tags?: ReadonlyArray<string>;
+    excludedTags?: ReadonlyArray<string>;
+  }>,
+  tagNames: ReadonlyArray<string>,
+  roots: string[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const name of tagNames) counts.set(name, 0);
+  if (tagNames.length === 0) return counts;
+  const candidates: Tag[] = tagNames.map((name) => ({ name, count: 0 }));
+  for (const v of videos) {
+    for (const name of getMatchingTags(v, candidates, roots)) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 export function extractTagsWithFolders(
   items: Array<{ filename: string; folder: string }>,
   roots: string[]

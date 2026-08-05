@@ -8,7 +8,7 @@ import type {
   ThumbnailFailure,
   VideoWithThumbs
 } from '@shared/types';
-import { extractTagsWithFolders, type Tag } from '../utils/tags';
+import { extractTagsWithFolders, countVideosByTag, type Tag } from '../utils/tags';
 import { showOpenToast } from '../components/OpenToast';
 
 export interface LibraryState {
@@ -300,24 +300,13 @@ export function useLibrary(): LibraryState {
       videos.map((v) => ({ filename: v.filename, folder: v.folder })),
       roots
     );
+    const candidateNames = new Set<string>();
+    for (const t of auto) candidateNames.add(t.name);
+    for (const name of userTagNames) candidateNames.add(name);
+    const counts = countVideosByTag(videos, Array.from(candidateNames), roots);
     const byName = new Map<string, Tag>();
-    for (const t of auto) byName.set(t.name, t);
-    for (const name of userTagNames) {
-      const lc = name.toLowerCase();
-      const existing = byName.get(name);
-      if (existing) {
-        const userCount = videos.filter((v) =>
-          (v.tags ?? []).some((t) => t.toLowerCase() === lc)
-        ).length;
-        if (userCount > existing.count) {
-          byName.set(name, { name, count: userCount });
-        }
-      } else {
-        const userCount = videos.filter((v) =>
-          (v.tags ?? []).some((t) => t.toLowerCase() === lc)
-        ).length;
-        byName.set(name, { name, count: userCount });
-      }
+    for (const name of candidateNames) {
+      byName.set(name, { name, count: counts.get(name) ?? 0 });
     }
     return Array.from(byName.values())
       .filter((t) => !hiddenTags.has(t.name))

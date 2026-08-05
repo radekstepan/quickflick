@@ -6,6 +6,7 @@ import {
   findRoot,
   videoMatchesTag,
   getMatchingTags,
+  countVideosByTag,
   extractTags,
   extractTagsWithFolders,
   type Tag
@@ -231,5 +232,87 @@ describe('extractTagsWithFolders', () => {
       { filename: 'unique2.mp4', folder: '/root' }
     ];
     expect(extractTagsWithFolders(items, ['/root'])).toEqual([]);
+  });
+});
+
+describe('countVideosByTag', () => {
+  it('returns zeros for every candidate name when there are no videos', () => {
+    const counts = countVideosByTag([], ['Alura Jenson', 'Beach'], ['/root']);
+    expect(counts.get('Alura Jenson')).toBe(0);
+    expect(counts.get('Beach')).toBe(0);
+  });
+
+  it('returns an empty map when there are no candidate names', () => {
+    const counts = countVideosByTag(
+      [{ filename: 'beach.mp4', folder: '/root' }],
+      [],
+      ['/root']
+    );
+    expect(counts.size).toBe(0);
+  });
+
+  // Regression: the sidebar used to show "1" for "Alura Jenson" because
+  // it only counted videos with the tag explicitly assigned, even though
+  // the click filter also matched videos via folder segments. The count
+  // must agree with the click filter (videoMatchesTag) so the number the
+  // user sees next to the tag matches the number of videos that appear
+  // when the tag is selected.
+  it('counts user-assigned tag plus folder-segment auto-matches, minus exclusions', () => {
+    const videos = [
+      { filename: 'clip1.mp4', folder: '/lib/Alura Jenson/2024', tags: ['Alura Jenson'] },
+      { filename: 'clip2.mp4', folder: '/lib/Alura Jenson/2023', excludedTags: ['Alura Jenson'] },
+      { filename: 'clip3.mp4', folder: '/lib/Alura Jenson/2022' },
+      { filename: 'clip4.mp4', folder: '/lib/Other' }
+    ];
+    const counts = countVideosByTag(videos, ['Alura Jenson'], ['/lib']);
+    // 1 explicit + 1 folder auto-match (clip2 excluded, clip4 not in folder)
+    expect(counts.get('Alura Jenson')).toBe(2);
+  });
+
+  it('counts filename matches as well as explicit and folder matches', () => {
+    const videos = [
+      { filename: 'alura jenson scene.mp4', folder: '/lib' },
+      { filename: 'clip.mp4', folder: '/lib/Alura Jenson' },
+      { filename: 'unrelated.mp4', folder: '/lib' }
+    ];
+    const counts = countVideosByTag(videos, ['Alura Jenson'], ['/lib']);
+    expect(counts.get('Alura Jenson')).toBe(2);
+  });
+
+  it('does not double-count a video that matches via multiple paths', () => {
+    const videos = [
+      {
+        filename: 'alura jenson clip.mp4',
+        folder: '/lib/Alura Jenson',
+        tags: ['Alura Jenson']
+      }
+    ];
+    const counts = countVideosByTag(videos, ['Alura Jenson'], ['/lib']);
+    expect(counts.get('Alura Jenson')).toBe(1);
+  });
+
+  it('respects excludedTags for auto-detected tags too', () => {
+    const videos = [
+      { filename: 'beach vacation 1.mp4', folder: '/root/Clips' },
+      { filename: 'beach vacation 2.mp4', folder: '/root/Other' },
+      { filename: 'beach day.mp4', folder: '/root/Clips', excludedTags: ['Beach Vacation'] }
+    ];
+    const counts = countVideosByTag(videos, ['Beach Vacation'], ['/root']);
+    expect(counts.get('Beach Vacation')).toBe(2);
+  });
+
+  it('returns the same count the filter would show for each tag', () => {
+    const videos = [
+      { filename: 'beach day.mp4', folder: '/root' },
+      { filename: 'mountain trip.mp4', folder: '/root' },
+      { filename: 'beach the cat.mp4', folder: '/root', tags: ['Beach'] },
+      { filename: 'clip.mp4', folder: '/root/Beach' }
+    ];
+    const names = ['Beach', 'Mountain'];
+    const counts = countVideosByTag(videos, names, ['/root']);
+    for (const name of names) {
+      const expected = videos.filter((v) => videoMatchesTag(v, name, ['/root'])).length;
+      expect(counts.get(name)).toBe(expected);
+    }
   });
 });
