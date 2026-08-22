@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { VideoWithThumbs } from '@shared/types';
 import type { Tag } from '../utils/tags';
+import { formatViewTime } from '../utils/formatViewTime';
 
 interface Props {
   roots: string[];
@@ -57,6 +58,16 @@ export function Sidebar({
     for (const v of videos) {
       const r = rootFor(v, roots);
       if (r) map.set(r, (map.get(r) ?? 0) + 1);
+    }
+    return map;
+  }, [roots, videos]);
+
+  const viewTimes = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of roots) map.set(r, 0);
+    for (const v of videos) {
+      const r = rootFor(v, roots);
+      if (r) map.set(r, (map.get(r) ?? 0) + v.view_time_ms);
     }
     return map;
   }, [roots, videos]);
@@ -161,6 +172,11 @@ export function Sidebar({
         >
           {menu.kind === 'root' ? (
             <>
+              <div className="context-menu-item-static">
+                <span>Total view time</span>
+                <span className="context-menu-shortcut">{formatViewTime(viewTimes.get(menu.path) ?? 0)}</span>
+              </div>
+              <div className="context-menu-separator" />
               <button
                 type="button"
                 className="context-menu-item"
