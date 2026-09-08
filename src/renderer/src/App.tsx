@@ -387,8 +387,20 @@ export default function App() {
 
   if (lib.loading) {
     return (
-      <div className="empty">
-        <div className="empty-title">Loading…</div>
+      <div className="splash">
+        <div className="splash-icon" aria-hidden="true">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="6" width="14" height="12" rx="2" />
+            <path d="M2 10h14" />
+            <path d="M16 9l5-3v12l-5-3z" />
+          </svg>
+        </div>
+        <div className="splash-title">QuickFlick</div>
+        <div className="splash-dots" aria-hidden="true">
+          <span className="splash-dot" />
+          <span className="splash-dot" />
+          <span className="splash-dot" />
+        </div>
       </div>
     );
   }

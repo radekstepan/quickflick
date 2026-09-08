@@ -279,11 +279,11 @@ export function useLibrary(): LibraryState {
       setRoots(rs);
       setFfmpeg(ffm);
       setUserTagNames(userTags);
-      setLoading(false);
       if (rs.length > 0) {
         const rows = await api.listVideos();
         if (mounted) setVideos(rows);
       }
+      if (mounted) setLoading(false);
     })();
     return () => {
       mounted = false;
