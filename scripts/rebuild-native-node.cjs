@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Restores better-sqlite3's native module for the SYSTEM node runtime
-// (vitest). The app itself needs the Electron build instead — see
-// rebuild-native.cjs, which `yarn dev` runs on every start.
+// Installs better-sqlite3's native module for the SYSTEM node runtime
+// (vitest). Runs automatically via `yarn test` / `yarn test:watch` — the
+// app itself needs the Electron build instead (scripts/rebuild-native.cjs,
+// run by dev/build/start/preview).
 //
 // The two runtimes share one path
-// (node_modules/better-sqlite3/build/Release/better_sqlite3.node), so flip
-// it with the matching command and don't mix them in one session:
-//   tests → yarn rebuild:node · app → yarn rebuild (or yarn dev)
+// (node_modules/better-sqlite3/build/Release/better_sqlite3.node), so don't
+// run tests and the app concurrently; whichever ran last owns the binary.
 
 const { spawnSync } = require('node:child_process');
 const { existsSync } = require('node:fs');
@@ -17,6 +17,17 @@ const pkgDir = join(root, 'node_modules', 'better-sqlite3');
 if (!existsSync(pkgDir)) {
   console.error('[rebuild-native-node] better-sqlite3 not found in node_modules');
   process.exit(1);
+}
+
+const binary = join(pkgDir, 'build', 'Release', 'better_sqlite3.node');
+
+// Skip the install when the current binary already loads under this node.
+try {
+  require(binary);
+  console.log('[rebuild-native-node] OK: binary already loads under the current node — skipping install');
+  process.exit(0);
+} catch {
+  console.log('[rebuild-native-node] current binary does not load under this node; reinstalling…');
 }
 const cli = join(root, 'node_modules', '.bin', 'prebuild-install');
 if (!existsSync(cli)) {
@@ -38,7 +49,7 @@ if (r.status !== 0) {
 
 // Sanity check: the binary must load under this exact node.
 try {
-  require(join(pkgDir, 'build', 'Release', 'better_sqlite3.node'));
+  require(binary);
 } catch (e) {
   console.error('[rebuild-native-node] binary does not load under the current node:');
   console.error(e instanceof Error ? e.message : e);

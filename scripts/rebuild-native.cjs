@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Re-installs better-sqlite3's native module for the Electron runtime.
+// Installs better-sqlite3's native module for the Electron runtime.
 // Layout-agnostic: handles pnpm's .pnpm/ store, yarn's flat node_modules, and npm.
+// Runs automatically via dev/build/start/preview. Skips the install when the
+// current binary already loads under the target Electron runtime.
 
 const { spawnSync } = require('node:child_process');
 const { readdirSync, statSync, existsSync, readFileSync } = require('node:fs');
@@ -60,6 +62,21 @@ if (!cli) {
   process.exit(1);
 }
 
+// Skip the install when the current binary already loads under the target
+// Electron runtime. Honors SKIP_ABI_CHECK=1 by always reinstalling.
+const binary = join(pkgDir, 'build', 'Release', 'better_sqlite3.node');
+if (process.env.SKIP_ABI_CHECK !== '1' && existsSync(binary)) {
+  const currentElectronBin = findElectronBinary(electronDir);
+  if (currentElectronBin) {
+    const pre = probeBinary(currentElectronBin, binary);
+    if (pre.status === 0) {
+      console.log(`[rebuild-native] OK: binary already loads under electron@${electronVersion} — skipping install`);
+      process.exit(0);
+    }
+    console.log('[rebuild-native] current binary does not load under electron; reinstalling…');
+  }
+}
+
 // 3) Run prebuild-install for the matching Electron ABI
 console.log('[rebuild-native] running prebuild-install for electron@' + electronVersion);
 const r = spawnSync(cli, ['-r', 'electron', '-t', electronVersion, '--verbose'], {
@@ -72,7 +89,6 @@ if (r.status !== 0) {
 }
 
 // 4) Sanity check the binary
-const binary = join(pkgDir, 'build', 'Release', 'better_sqlite3.node');
 if (!existsSync(binary)) {
   console.error('[rebuild-native] expected binary missing at', binary);
   process.exit(1);
@@ -99,6 +115,17 @@ function findElectronBinary(electronPkgDir) {
   return null;
 }
 
+function probeBinary(electronBin, binary) {
+  return spawnSync(
+    electronBin,
+    ['-e', `require(${JSON.stringify(binary)}); console.log('loaded OK')`],
+    {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      encoding: 'utf8',
+    }
+  );
+}
+
 const electronBin = findElectronBinary(electronDir);
 if (!electronBin) {
   console.warn(`[rebuild-native] could not locate electron binary in ${electronDir}; skipping ABI verification`);
@@ -118,14 +145,7 @@ if (!electronBin) {
   if (process.env.SKIP_ABI_CHECK === '1') {
     console.warn('[rebuild-native] SKIP_ABI_CHECK=1, skipping load verification');
   } else {
-    const loadProbe = spawnSync(
-      electronBin,
-      ['-e', `require(${JSON.stringify(binary)}); console.log('loaded OK')`],
-      {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        encoding: 'utf8',
-      }
-    );
+    const loadProbe = probeBinary(electronBin, binary);
     if (loadProbe.status !== 0) {
       console.error(
         `[rebuild-native] ABI mismatch: ${binary} does not load under electron@${electronVersion}\n` +

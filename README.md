@@ -25,28 +25,33 @@ A local video library browser for macOS. Pick a folder of videos, get a beautifu
 ## Development
 
 ```bash
-pnpm install
-pnpm dev
+yarn install
+yarn dev
 ```
 
 This starts the Vite dev server and launches Electron with HMR. Closing the window (red X or **Cmd+W**) and **Cmd+Q** (or app menu → Quit QuickFlick) both fully exit and return the terminal.
 
 ### About the native module rebuild
 
-### About the native module rebuild
+`better-sqlite3` ships native code that must be compiled for the runtime that loads it: Electron's Node ABI for the app, the system Node's ABI for `vitest`. Both runtimes share one file (`node_modules/better-sqlite3/build/Release/better_sqlite3.node`), so each command sets the ABI it needs before running:
 
-`better-sqlite3` ships native code that must be compiled for Electron's Node ABI (not the system Node's). pnpm 11 silently skips the root package's `postinstall`, so we use a `predev` hook that runs `scripts/rebuild-native.cjs` before every `dev` / `build` / `package:mac`. The script:
+- `dev` / `build` / `start` / `preview` run `scripts/rebuild-native.cjs` (Electron ABI)
+- `test` / `test:watch` run `scripts/rebuild-native-node.cjs` (system Node ABI)
 
-1. Reads the installed Electron version from `node_modules/.pnpm/electron@*/package.json`
+Both scripts verify the current binary actually loads under the target runtime and skip the reinstall when it already matches. Don't run the app and the tests concurrently — whichever ran last owns the binary.
+
+The Electron script:
+
+1. Reads the installed Electron version from `node_modules`
 2. Invokes `prebuild-install -r electron -t <version>` inside the better-sqlite3 package
-3. Verifies the binary landed at `build/Release/better_sqlite3.node`
+3. Verifies the binary landed at `build/Release/better_sqlite3.node` and actually loads under Electron (catches `NODE_MODULE_VERSION` mismatches)
 
-If you ever see "Could not locate the bindings file" on app start, run `pnpm rebuild` to fix it manually.
+If you ever see "Could not locate the bindings file" on app start, run `yarn install` (to restore `prebuild-install` and deps), then rerun the command you were running.
 
 ## Build a `.dmg`
 
 ```bash
-pnpm package:mac
+yarn package:mac
 ```
 
 Builds a universal-friendly `.dmg` for both Apple Silicon and Intel. Output lands in `release/`:
