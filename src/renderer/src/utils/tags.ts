@@ -31,6 +31,37 @@ function tokenizeRaw(filename: string): string[] {
     .filter(Boolean);
 }
 
+// Token caches: countVideosByTag/getMatchingTags used to call
+// tokenizeRaw(filename) once per (video, tag) pair — O(V·T)
+// tokenizations on the React thread. Cache by input string so each
+// distinct filename/tag is tokenized once per session.
+const rawTokenCache = new Map<string, string[]>();
+const tagTokenCache = new Map<string, string[]>();
+const TOKEN_CACHE_LIMIT = 20000;
+
+function tokenizeRawCached(filename: string): string[] {
+  const hit = rawTokenCache.get(filename);
+  if (hit) return hit;
+  const toks = tokenizeRaw(filename);
+  if (rawTokenCache.size >= TOKEN_CACHE_LIMIT) rawTokenCache.clear();
+  rawTokenCache.set(filename, toks);
+  return toks;
+}
+
+function tagTokensCached(tagName: string): string[] {
+  const hit = tagTokenCache.get(tagName);
+  if (hit) return hit;
+  const toks = tagName.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tagTokenCache.size >= TOKEN_CACHE_LIMIT) tagTokenCache.clear();
+  tagTokenCache.set(tagName, toks);
+  return toks;
+}
+
+export function __clearTagCaches(): void {
+  rawTokenCache.clear();
+  tagTokenCache.clear();
+}
+
 function isFilterable(token: string): boolean {
   return NUMERIC_RE.test(token) || isMostlyNumeric(token) || STOPWORDS.has(token);
 }
@@ -40,8 +71,10 @@ function tokenize(filename: string): string[] {
 }
 
 export function matchesTag(filename: string, tagName: string): boolean {
-  const fileTokens = tokenizeRaw(filename);
-  const tagTokens = tagName.toLowerCase().split(/\s+/).filter(Boolean);
+  return matchesTagTokens(tokenizeRawCached(filename), tagTokensCached(tagName));
+}
+
+function matchesTagTokens(fileTokens: ReadonlyArray<string>, tagTokens: ReadonlyArray<string>): boolean {
   if (tagTokens.length === 0) return false;
   for (let start = 0; start < fileTokens.length; start++) {
     let i = start;
@@ -151,29 +184,44 @@ export function findRoot(folder: string, roots: string[]): string | null {
 export function videoMatchesTag(
   video: { filename: string; folder: string; tags?: ReadonlyArray<string>; excludedTags?: ReadonlyArray<string> },
   tagName: string,
-  roots: string[]
+  roots: string[],
+  globalExcluded?: ReadonlySet<string> | ReadonlyArray<string>
 ): boolean {
   const lc = tagName.toLowerCase();
   if (video.excludedTags && video.excludedTags.some((t) => t.toLowerCase() === lc)) {
     return false;
   }
+  // Explicit user tags win over the global blocklist so a globally
+  // deleted tag can still be re-added to an individual video.
   if (video.tags && video.tags.some((t) => t.toLowerCase() === lc)) return true;
-  if (matchesTag(video.filename, tagName)) return true;
+  if (globalExcluded) {
+    if (globalExcluded instanceof Set) {
+      // Hot path: callers pass a pre-lowercased Set.
+      if ((globalExcluded as ReadonlySet<string>).has(lc)) return false;
+    } else {
+      for (const s of globalExcluded) {
+        if (s.toLowerCase() === lc) return false;
+      }
+    }
+  }
+  const fileTokens = tokenizeRawCached(video.filename);
+  if (matchesTagTokens(fileTokens, tagTokensCached(tagName))) return true;
   const root = findRoot(video.folder, roots);
   if (!root) return false;
   const segments = getSubfolderSegments(video.folder, root);
   if (segments.length === 0) return false;
-  return segments.some((seg) => matchesTag(seg, tagName));
+  return segments.some((seg) => matchesTagTokens(tokenizeRawCached(seg), tagTokensCached(tagName)));
 }
 
 export function getMatchingTags(
   video: { filename: string; folder: string; tags?: ReadonlyArray<string>; excludedTags?: ReadonlyArray<string> },
   tags: ReadonlyArray<Tag>,
-  roots: string[]
+  roots: string[],
+  globalExcluded?: ReadonlySet<string> | ReadonlyArray<string>
 ): string[] {
   const matches: string[] = [];
   for (const t of tags) {
-    if (videoMatchesTag(video, t.name, roots)) matches.push(t.name);
+    if (videoMatchesTag(video, t.name, roots, globalExcluded)) matches.push(t.name);
   }
   matches.sort((a, b) => a.localeCompare(b));
   return matches;
@@ -193,14 +241,15 @@ export function countVideosByTag(
     excludedTags?: ReadonlyArray<string>;
   }>,
   tagNames: ReadonlyArray<string>,
-  roots: string[]
+  roots: string[],
+  globalExcluded?: ReadonlySet<string> | ReadonlyArray<string>
 ): Map<string, number> {
   const counts = new Map<string, number>();
   for (const name of tagNames) counts.set(name, 0);
   if (tagNames.length === 0) return counts;
   const candidates: Tag[] = tagNames.map((name) => ({ name, count: 0 }));
   for (const v of videos) {
-    for (const name of getMatchingTags(v, candidates, roots)) {
+    for (const name of getMatchingTags(v, candidates, roots, globalExcluded)) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
   }

@@ -16,7 +16,12 @@ import {
   getVideoById,
   getVideoWithRelations,
   getThumbsDir,
-  getThumbsForVideo
+  getThumbsForVideo,
+  getTagsForVideo,
+  getExclusionsForVideo,
+  setVideoTag,
+  setVideoExclusion,
+  copyTagsAndExclusions
 } from './db';
 import { probeVideo } from './probe';
 import { generateThumbnails, thumbUrl, cacheBustThumbUrl, frameCount } from './thumbnailer';
@@ -415,9 +420,16 @@ export async function _reconcile(input: ReconcileInput): Promise<ReconcileOutcom
 
   // Branch 2: move — same content lives at a different row/path. Migrate
   // the existing row here. If `prev` exists at the new path with a
-  // different fingerprint, it's a stale pre-migration row that we drop.
+  // different fingerprint, it's a stale pre-migration row that we drop —
+  // but its tags/exclusions belong to this path, so merge them into the
+  // survivor first instead of wiping them via CASCADE.
   if (byFp) {
     if (prev && prev.id !== byFp.id) {
+      try {
+        copyTagsAndExclusions(prev.id, byFp.id);
+      } catch {
+        // best effort — never fail a scan on tag carry-over
+      }
       deleteVideo(prev.id);
     }
     migrateVideoPath(byFp.id, {
@@ -444,8 +456,18 @@ export async function _reconcile(input: ReconcileInput): Promise<ReconcileOutcom
 
   // Branch 3: stale-and-replace — a row exists at this path but its
   // content (fingerprint) is gone (or was never set and the file is
-  // now genuinely new). Drop the old row, insert fresh.
+  // now genuinely new). Drop the old row, insert fresh — but carry the
+  // user's tags/exclusions over by path so a re-encode/trim doesn't wipe
+  // their tagging work (view stats still reset — that's content-specific).
   if (prev) {
+    let carriedTags: string[] = [];
+    let carriedExcluded: string[] = [];
+    try {
+      carriedTags = getTagsForVideo(prev.id);
+      carriedExcluded = getExclusionsForVideo(prev.id);
+    } catch {
+      // best effort
+    }
     deleteVideo(prev.id);
     byPath.delete(path);
     if (prev.content_fingerprint) byFingerprint.delete(prev.content_fingerprint);
@@ -461,6 +483,22 @@ export async function _reconcile(input: ReconcileInput): Promise<ReconcileOutcom
       codec: null,
       content_fingerprint: fingerprint
     });
+    for (const t of carriedTags) {
+      try {
+        setVideoTag(id, t);
+      } catch {
+        // best effort
+      }
+    }
+    const tagSet = new Set(carriedTags.map((t) => t.toLowerCase()));
+    for (const e of carriedExcluded) {
+      if (tagSet.has(e.toLowerCase())) continue;
+      try {
+        setVideoExclusion(id, e);
+      } catch {
+        // best effort
+      }
+    }
     const inserted = getVideoByPath(path);
     if (inserted && fingerprint) byFingerprint.set(fingerprint, inserted);
     return { id, fingerprint, needsThumb: true, kind: 'replaced', path };

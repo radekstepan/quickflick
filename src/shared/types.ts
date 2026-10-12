@@ -157,6 +157,8 @@ export interface Api {
   showItemInFolder: (path: string) => Promise<void>;
   setVideoTag: (videoId: number, tagName: string) => Promise<void>;
   removeVideoTag: (videoId: number, tagName: string) => Promise<void>;
+  deleteTagGlobally: (tagName: string) => Promise<void>;
+  getGlobalExcludedTagNames: () => Promise<string[]>;
   getAllUserTagNames: () => Promise<string[]>;
   getSettings: () => Promise<AppSettings>;
   setTheme: (theme: Theme) => Promise<void>;

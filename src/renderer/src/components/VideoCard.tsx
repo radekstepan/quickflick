@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useHoverCycle } from '../hooks/useHoverCycle';
 import { usePreloadedImages } from '../hooks/usePreloadedImages';
@@ -7,12 +7,21 @@ import { displayName } from '../utils/displayName';
 import { getMatchingTags, type Tag } from '../utils/tags';
 import { formatViewsWithTime } from '../utils/formatViewTime';
 import { TagPickerModal } from './TagPickerModal';
+import { applyPendingToVideo, type PendingVideoEdit } from '../hooks/useLibrary';
 import type { OpenResult, VideoWithThumbs } from '@shared/types';
 
 interface Props {
   video: VideoWithThumbs;
   roots: string[];
-  tags: Tag[];
+  /** Transition-consistent base tags. Referentially stable across delete
+   *  clicks, so per-card matching memos survive them. */
+  matchTags: Tag[];
+  /** Globally deleted names, hidden urgently (cheap chip filter below). */
+  removedTagNames: ReadonlySet<string>;
+  /** This video's urgent optimistic overlay, if any. Stable per video. */
+  pending: PendingVideoEdit | undefined;
+  /** Display names for the picker, memoized once in the parent. */
+  tagNames: string[];
   onOpen: (id: number) => Promise<OpenResult> | void;
   onOpened?: (result: OpenResult) => void;
   onAddTag: (id: number, name: string) => void;
@@ -45,7 +54,18 @@ export function viewsLabel(viewCount: number, viewTimeMs: number): string {
   return formatViewsWithTime(viewCount, viewTimeMs);
 }
 
-export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRemoveTag }: Props) {
+function VideoCardInner({
+  video,
+  roots,
+  matchTags,
+  removedTagNames,
+  pending,
+  tagNames,
+  onOpen,
+  onOpened,
+  onAddTag,
+  onRemoveTag
+}: Props) {
   const urls = useMemo(
     () =>
       video.thumbnails
@@ -107,17 +127,42 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
 
   const showBadge = hover.isHovering && urls.length > 1;
 
-  const matchingTags = useMemo(
-    () => getMatchingTags(video, tags, roots),
-    [video, tags, roots]
+  // Urgent optimistic overlay: pending entry wins over the
+  // (possibly transition-lagged) video prop. Same ref unless edited.
+  const effVideo = useMemo(
+    () => applyPendingToVideo(video, pending),
+    [video, pending]
   );
+
+  // Matching runs against the stable base list. Split in two so a delete
+  // click — which only changes removedTagNames — skips the O(T) match and
+  // reruns just the O(own chips) tail below.
+  const baseMatches = useMemo(
+    () => getMatchingTags(effVideo, matchTags, roots),
+    [effVideo, matchTags, roots]
+  );
+  const matchingTags = useMemo(() => {
+    // Union covers pending-added explicit tags during the transition beat.
+    const out = baseMatches.slice();
+    const seen = new Set(out.map((t) => t.toLowerCase()));
+    for (const t of effVideo.tags) {
+      if (!seen.has(t.toLowerCase())) {
+        seen.add(t.toLowerCase());
+        out.push(t);
+      }
+    }
+    // Removed filter hides globally deleted names on the same frame.
+    const filtered = out.filter((t) => !removedTagNames.has(t.toLowerCase()));
+    filtered.sort((a, b) => a.localeCompare(b));
+    return filtered;
+  }, [baseMatches, effVideo, removedTagNames]);
   const userTagSet = useMemo(
-    () => new Set(video.tags.map((t) => t.toLowerCase())),
-    [video.tags]
+    () => new Set(effVideo.tags.map((t) => t.toLowerCase())),
+    [effVideo]
   );
   const excludedTagSet = useMemo(
-    () => new Set(video.excludedTags.map((t) => t.toLowerCase())),
-    [video.excludedTags]
+    () => new Set(effVideo.excludedTags.map((t) => t.toLowerCase())),
+    [effVideo]
   );
 
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -255,7 +300,7 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
         ? createPortal(
             <TagPickerModal
               matchingTags={matchingTags}
-              allTagNames={tags.map((t) => t.name)}
+              allTagNames={tagNames}
               userTagSet={userTagSet}
               excludedTagSet={excludedTagSet}
               onAdd={(name) => onAddTag(video.id, name)}
@@ -268,3 +313,25 @@ export function VideoCard({ video, roots, tags, onOpen, onOpened, onAddTag, onRe
     </div>
   );
 }
+
+// Skips re-render unless this card's own inputs changed. matchTags is
+// transition-stable and pending is a stable per-video entry; a delete
+// elsewhere only changes removedTagNames/tagNames identity, whose memos
+// inside are O(own chips). NOTE: removedTagNames/tagNames MUST stay in
+// the comparison — memo bailout discards the new props, so ignoring them
+// would leave stale chips in an open picker until an unrelated prop
+// changes. Re-render exec with memo hits costs microseconds per card.
+export const VideoCard = memo(VideoCardInner, (prev, next) => {
+  return (
+    prev.video === next.video &&
+    prev.roots === next.roots &&
+    prev.matchTags === next.matchTags &&
+    prev.removedTagNames === next.removedTagNames &&
+    prev.pending === next.pending &&
+    prev.tagNames === next.tagNames &&
+    prev.onOpen === next.onOpen &&
+    prev.onOpened === next.onOpened &&
+    prev.onAddTag === next.onAddTag &&
+    prev.onRemoveTag === next.onRemoveTag
+  );
+});

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { VideoCard } from './VideoCard';
+import type { PendingVideoEdit } from '../hooks/useLibrary';
 import type { Tag } from '../utils/tags';
 import type { OpenResult, VideoWithThumbs } from '@shared/types';
 
@@ -11,7 +12,10 @@ export interface VideoGroup {
 interface Props {
   groups: VideoGroup[];
   roots: string[];
-  tags: Tag[];
+  matchTags: Tag[];
+  removedTagNames: ReadonlySet<string>;
+  pendingEdits: ReadonlyMap<number, PendingVideoEdit>;
+  tagNames: string[];
   onOpen: (id: number) => Promise<OpenResult>;
   onOpened?: (result: OpenResult) => void;
   getViewCount: (id: number, fallback: number) => number;
@@ -29,7 +33,20 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function GroupedVideoGrid({ groups, roots, tags, onOpen, onOpened, getViewCount, onAddTag, onRemoveTag, resetScrollKey }: Props) {
+export function GroupedVideoGridInner({
+  groups,
+  roots,
+  matchTags,
+  removedTagNames,
+  pendingEdits,
+  tagNames,
+  onOpen,
+  onOpened,
+  getViewCount,
+  onAddTag,
+  onRemoveTag,
+  resetScrollKey
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(1);
 
@@ -63,9 +80,12 @@ export function GroupedVideoGrid({ groups, roots, tags, onOpen, onOpened, getVie
             {g.videos.map((v) => (
               <VideoCard
                 key={v.id}
-                video={{ ...v, view_count: getViewCount(v.id, v.view_count) }}
+                video={v}
                 roots={roots}
-                tags={tags}
+                matchTags={matchTags}
+                removedTagNames={removedTagNames}
+                pending={pendingEdits.get(v.id)}
+                tagNames={tagNames}
                 onOpen={onOpen}
                 onOpened={onOpened}
                 onAddTag={onAddTag}
@@ -78,3 +98,8 @@ export function GroupedVideoGrid({ groups, roots, tags, onOpen, onOpened, getVie
     </div>
   );
 }
+
+// Props are transition-stable across delete clicks (groups/base refs
+// unchanged on the urgent frame), so unrelated App renders — scan
+// progress ticks, search keystrokes elsewhere — skip the whole grid.
+export const GroupedVideoGrid = memo(GroupedVideoGridInner);

@@ -17,7 +17,7 @@ interface Props {
   onSelectUntagged: () => void;
   onRemoveRoot: (path: string) => Promise<void>;
   onRescan: () => void;
-  onHideTag: (name: string) => void;
+  onDeleteTag: (name: string) => void;
 }
 
 type ContextMenu =
@@ -50,7 +50,7 @@ export function Sidebar({
   onSelectUntagged,
   onRemoveRoot,
   onRescan,
-  onHideTag
+  onDeleteTag
 }: Props) {
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -143,7 +143,7 @@ export function Sidebar({
                   e.preventDefault();
                   setMenu({ kind: 'tag', x: e.clientX, y: e.clientY, name: t.name });
                 }}
-                title={`Click to filter · Right-click to remove`}
+                title={`Delete "${t.name}" from all videos`}
               >
                 <span className="sidebar-label">{t.name}</span>
                 <span className="count">{t.count}</span>
@@ -223,7 +223,7 @@ export function Sidebar({
                 const n = menu.name;
                 if (selectedTag === n) onSelectTag(null);
                 setMenu(null);
-                onHideTag(n);
+                onDeleteTag(n);
               }}
             >
               <span className="context-menu-icon" aria-hidden="true">
@@ -231,8 +231,8 @@ export function Sidebar({
                   <path d="M18 6L6 18M6 6l12 12" />
                 </svg>
               </span>
-              <span>Remove tag</span>
-            </button>
+                <span>Delete tag</span>
+              </button>
           )}
         </div>
       ) : null}

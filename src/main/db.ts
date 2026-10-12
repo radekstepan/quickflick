@@ -58,6 +58,14 @@ const SUPPORTING_TABLE_SCHEMAS: Array<{ name: string; ddl: string; indexes: stri
       PRIMARY KEY (video_id, tag_name)
     )`,
     indexes: ['CREATE INDEX IF NOT EXISTS idx_video_excluded_tags_name ON video_excluded_tags(tag_name)']
+  },
+  {
+    name: 'global_excluded_tags',
+    ddl: `CREATE TABLE IF NOT EXISTS global_excluded_tags (
+      tag_name   TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL
+    )`,
+    indexes: []
   }
 ];
 
@@ -199,6 +207,11 @@ export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void
   // with FKs targeting the real `videos` table, preserving all rows.
   repairSupportingTablesIfNeeded();
 
+  // Collapse any case-variant duplicates left by the old case-sensitive
+  // remove/set logic (e.g. `Beach` + `beach` on the same video). Keeps
+  // the oldest row per (video_id, lower(tag)).
+  dedupeTagCaseVariants();
+
   // Migrate legacy single-library kv entry into library_roots.
   const rootCount = (db.prepare('SELECT COUNT(*) AS c FROM library_roots').get() as { c: number }).c;
   if (rootCount === 0) {
@@ -312,6 +325,25 @@ function ensureVideosSchema(): void {
 // Used to detect a DB left in the broken post-migration state where SQLite
 // auto-rewrote the supporting tables' FKs to point at the dropped
 // `videos_old` (the old name used during the videos table rebuild).
+// Collapse case-variant duplicates in the tag tables. Idempotent.
+function dedupeTagCaseVariants(): void {
+  try {
+    getDb().exec(`
+      DELETE FROM video_tags WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM video_tags GROUP BY video_id, LOWER(tag_name)
+      );
+      DELETE FROM video_excluded_tags WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM video_excluded_tags GROUP BY video_id, LOWER(tag_name)
+      );
+      DELETE FROM global_excluded_tags WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM global_excluded_tags GROUP BY LOWER(tag_name)
+      );
+    `);
+  } catch {
+    // best effort — never block startup on tag cleanup
+  }
+}
+
 function hasDanglingFks(d: Database.Database, table: string): boolean {
   const rows = d.prepare(`PRAGMA foreign_key_list(${table})`).all() as { table: string }[];
   return rows.some((r) => r.table !== 'videos');
@@ -819,46 +851,131 @@ export function getThumbsForVideo(videoId: number): Thumbnail[] {
 }
 
 export function setVideoTag(videoId: number, tagName: string): void {
+  const name = tagName.trim().replace(/\s+/g, ' ');
+  if (!name) return;
   const db = getDb();
-  const tx = db.transaction((id: number, name: string) => {
+  const tx = db.transaction((id: number, n: string) => {
+    // NOCASE delete first so a re-add with different capitalisation
+    // normalises to a single canonical row instead of creating a
+    // case-variant duplicate (PK itself is case-sensitive).
+    db.prepare('DELETE FROM video_tags WHERE video_id = ? AND tag_name = ? COLLATE NOCASE').run(id, n);
     db.prepare(
       `INSERT INTO video_tags (video_id, tag_name, created_at)
        VALUES (?, ?, ?)
        ON CONFLICT(video_id, tag_name) DO NOTHING`
-    ).run(id, name, Date.now());
-    db.prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ?').run(id, name);
+    ).run(id, n, Date.now());
+    db.prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ? COLLATE NOCASE').run(id, n);
   });
-  tx(videoId, tagName);
+  tx(videoId, name);
 }
 
+// Per-video remove: delete the explicit row (case-insensitive) AND always
+// record a per-video exclusion. The old either/or logic meant a tag that
+// also auto-matched via filename/folder would instantly reappear after
+// delete (and certainly after rescan/reload).
 export function removeVideoTag(videoId: number, tagName: string): void {
+  const name = tagName.trim().replace(/\s+/g, ' ');
+  if (!name) return;
   const db = getDb();
-  const exists = db
-    .prepare('SELECT 1 AS x FROM video_tags WHERE video_id = ? AND tag_name = ?')
-    .get(videoId, tagName) as { x: number } | undefined;
-  if (exists) {
-    db.prepare('DELETE FROM video_tags WHERE video_id = ? AND tag_name = ?').run(videoId, tagName);
-  } else {
+  const tx = db.transaction((id: number, n: string) => {
+    db.prepare('DELETE FROM video_tags WHERE video_id = ? AND tag_name = ? COLLATE NOCASE').run(id, n);
+    const excluded = db
+      .prepare('SELECT 1 AS x FROM video_excluded_tags WHERE video_id = ? AND tag_name = ? COLLATE NOCASE')
+      .get(id, n) as { x: number } | undefined;
+    if (!excluded) {
+      db.prepare(
+        `INSERT INTO video_excluded_tags (video_id, tag_name, created_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(video_id, tag_name) DO NOTHING`
+      ).run(id, n, Date.now());
+    }
+  });
+  tx(videoId, name);
+}
+
+// Global delete: remove the tag from EVERY video and suppress future
+// auto-generation of that name. Explicit re-adds on a single video still
+// win over the global block at match time (see videoMatchesTag).
+export function deleteTagGlobally(tagName: string): void {
+  const name = tagName.trim().replace(/\s+/g, ' ');
+  if (!name) return;
+  const db = getDb();
+  const tx = db.transaction((n: string) => {
+    db.prepare('DELETE FROM video_tags WHERE tag_name = ? COLLATE NOCASE').run(n);
+    db.prepare('DELETE FROM global_excluded_tags WHERE tag_name = ? COLLATE NOCASE').run(n);
     db.prepare(
-      `INSERT INTO video_excluded_tags (video_id, tag_name, created_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(video_id, tag_name) DO NOTHING`
-    ).run(videoId, tagName, Date.now());
-  }
+      `INSERT INTO global_excluded_tags (tag_name, created_at) VALUES (?, ?)`
+    ).run(n, Date.now());
+  });
+  tx(name);
+}
+
+export function removeGlobalExclusion(tagName: string): void {
+  getDb().prepare('DELETE FROM global_excluded_tags WHERE tag_name = ? COLLATE NOCASE').run(tagName);
+}
+
+export function getGlobalExcludedTagNames(): string[] {
+  return (
+    getDb()
+      .prepare('SELECT tag_name FROM global_excluded_tags ORDER BY tag_name')
+      .all() as { tag_name: string }[]
+  ).map((r) => r.tag_name);
 }
 
 export function setVideoExclusion(videoId: number, tagName: string): void {
+  const name = tagName.trim().replace(/\s+/g, ' ');
+  if (!name) return;
+  const db = getDb();
+  const exists = db
+    .prepare('SELECT 1 AS x FROM video_excluded_tags WHERE video_id = ? AND tag_name = ? COLLATE NOCASE')
+    .get(videoId, name) as { x: number } | undefined;
+  if (exists) return;
   getDb()
     .prepare(
       `INSERT INTO video_excluded_tags (video_id, tag_name, created_at)
        VALUES (?, ?, ?)
        ON CONFLICT(video_id, tag_name) DO NOTHING`
     )
-    .run(videoId, tagName, Date.now());
+    .run(videoId, name, Date.now());
 }
 
 export function removeVideoExclusion(videoId: number, tagName: string): void {
-  getDb().prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ?').run(videoId, tagName);
+  getDb().prepare('DELETE FROM video_excluded_tags WHERE video_id = ? AND tag_name = ? COLLATE NOCASE').run(videoId, tagName);
+}
+
+export function getExclusionsForVideo(videoId: number): string[] {
+  return (
+    getDb()
+      .prepare('SELECT tag_name FROM video_excluded_tags WHERE video_id = ? ORDER BY tag_name')
+      .all(videoId) as { tag_name: string }[]
+  ).map((r) => r.tag_name);
+}
+
+// Copy user tags + per-video exclusions from one video row to another.
+// Used by the scanner when content at a path is replaced: the new row
+// keeps the user's tagging work instead of starting blank.
+export function copyTagsAndExclusions(fromVideoId: number, toVideoId: number): void {
+  if (fromVideoId === toVideoId) return;
+  const db = getDb();
+  const tx = db.transaction((from: number, to: number) => {
+    const tags = db
+      .prepare('SELECT tag_name, created_at FROM video_tags WHERE video_id = ?')
+      .all(from) as { tag_name: string; created_at: number }[];
+    const insTag = db.prepare(
+      `INSERT INTO video_tags (video_id, tag_name, created_at)
+       VALUES (?, ?, ?) ON CONFLICT(video_id, tag_name) DO NOTHING`
+    );
+    for (const t of tags) insTag.run(to, t.tag_name, t.created_at);
+    const excluded = db
+      .prepare('SELECT tag_name, created_at FROM video_excluded_tags WHERE video_id = ?')
+      .all(from) as { tag_name: string; created_at: number }[];
+    const insEx = db.prepare(
+      `INSERT INTO video_excluded_tags (video_id, tag_name, created_at)
+       VALUES (?, ?, ?) ON CONFLICT(video_id, tag_name) DO NOTHING`
+    );
+    for (const e of excluded) insEx.run(to, e.tag_name, e.created_at);
+  });
+  tx(fromVideoId, toVideoId);
 }
 
 export function getTagsForVideo(videoId: number): string[] {

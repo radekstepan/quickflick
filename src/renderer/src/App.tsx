@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Toolbar, ScanProgressOverlay } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
 import { VideoGrid } from './components/VideoGrid';
@@ -179,19 +179,30 @@ export default function App() {
     setSearch('');
   }, []);
 
+  const globalExcludedSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const n of lib.globalExcludedTags) s.add(n.toLowerCase());
+    return s;
+  }, [lib.globalExcludedTags]);
+
+  // The untagged badge is a full O(V·T) re-match. Derive it from the
+  // deferred tag list so a delete click paints first and the number
+  // settles a frame later instead of blocking the click.
+  const deferredTagsForCount = useDeferredValue(lib.tags);
+
   const untaggedCount = useMemo(() => {
-    if (lib.tags.length === 0) return lib.videos.length;
+    if (deferredTagsForCount.length === 0) return lib.videos.length;
     const seen = new Set<number>();
     let n = 0;
     for (const v of lib.videos) {
       if (seen.has(v.id)) continue;
-      if (getMatchingTags(v, lib.tags, lib.roots).length === 0) {
+      if (getMatchingTags(v, deferredTagsForCount, lib.roots, globalExcludedSet).length === 0) {
         seen.add(v.id);
         n++;
       }
     }
     return n;
-  }, [lib.videos, lib.tags, lib.roots]);
+  }, [lib.videos, deferredTagsForCount, lib.roots, globalExcludedSet]);
 
   // Frozen display order: captured once when lib.videos first becomes
   // non-empty, and re-captured when the user picks a new sort key. Click
@@ -262,7 +273,7 @@ export default function App() {
     // chosen sorter.
     let captured: number[];
     if (sortKey === 'tags') {
-      const groups = buildTagGroups(lib.videos, lib.tags, lib.roots);
+      const groups = buildTagGroups(lib.videos, lib.baseTags, lib.roots, globalExcludedSet);
       captured = Array.from(new Set(groups.flatMap((g) => g.videos.map((v) => v.id))));
     } else {
       const sorter = pickSorter(sortKey, lib.roots);
@@ -331,7 +342,10 @@ export default function App() {
   );
 
   // Apply current root/search/tag filter on top of the frozen order.
-  const displayIds = useMemo(() => {
+  // Split in two so the common case (no tag filter active) keeps ref
+  // identity across delete clicks: the tag-dependent pass is skipped and
+  // displayVideos/groupsByTagBase memos below survive the urgent frame.
+  const preTagIds = useMemo(() => {
     if (frozenOrder === null) return [] as number[];
     const q = search.trim().toLowerCase();
     return frozenOrder.filter((id) => {
@@ -346,11 +360,20 @@ export default function App() {
         const name = normalizeForSearch(displayName(v.filename, v.folder, lib.roots));
         if (!name.includes(q)) return false;
       }
-      if (selectedTag && !videoMatchesTag(v, selectedTag, lib.roots)) return false;
-      if (filterUntagged && getMatchingTags(v, lib.tags, lib.roots).length > 0) return false;
       return true;
     });
-  }, [frozenOrder, videosById, selectedRoot, selectedTag, filterUntagged, search, lib.roots, lib.tags]);
+  }, [frozenOrder, videosById, selectedRoot, search, lib.roots]);
+
+  const displayIds = useMemo(() => {
+    if (selectedTag === null && !filterUntagged) return preTagIds;
+    return preTagIds.filter((id) => {
+      const v = videosById.get(id);
+      if (!v) return false;
+      if (selectedTag && !videoMatchesTag(v, selectedTag, lib.roots, globalExcludedSet)) return false;
+      if (filterUntagged && getMatchingTags(v, lib.tags, lib.roots, globalExcludedSet).length > 0) return false;
+      return true;
+    });
+  }, [selectedTag, filterUntagged, preTagIds, videosById, lib.roots, lib.tags, globalExcludedSet]);
 
   const displayVideos = useMemo(
     () =>
@@ -360,12 +383,22 @@ export default function App() {
     [displayIds, videosById]
   );
 
-  const groupsByTag = useMemo<VideoGroup[]>(() => {
-    if (lib.tags.length === 0) {
+  // Bucket videos by tag name. Keyed on baseTags (transition-consistent),
+  // so a delete click skips the O(V·T) regroup on the urgent frame; the
+  // cheap removed-group filter below hides the deleted group instantly.
+  const groupsByTagBase = useMemo<VideoGroup[]>(() => {
+    if (lib.baseTags.length === 0) {
       return [{ tag: null, videos: displayVideos }];
     }
-    return buildTagGroups(displayVideos, lib.tags, lib.roots);
-  }, [displayVideos, lib.tags, lib.roots]);
+    return buildTagGroups(displayVideos, lib.baseTags, lib.roots, globalExcludedSet);
+  }, [displayVideos, lib.baseTags, lib.roots, globalExcludedSet]);
+
+  const groupsByTag = useMemo<VideoGroup[]>(() => {
+    if (lib.removedTagNames.size === 0) return groupsByTagBase;
+    return groupsByTagBase.filter(
+      (g) => g.tag === null || !lib.removedTagNames.has(g.tag.toLowerCase())
+    );
+  }, [groupsByTagBase, lib.removedTagNames]);
 
   const groupsByDate = useMemo<VideoGroup[]>(() => {
     if (sortKey !== 'newest' && sortKey !== 'oldest') return [];
@@ -442,7 +475,7 @@ export default function App() {
         onSelectUntagged={handleSelectUntagged}
         onRemoveRoot={lib.removeFolder}
         onRescan={lib.rescan}
-        onHideTag={lib.hideTag}
+        onDeleteTag={lib.deleteTagGlobally}
       />
 
       <div className="main">
@@ -460,7 +493,10 @@ export default function App() {
           <GroupedVideoGrid
             groups={groups}
             roots={lib.roots}
-            tags={lib.tags}
+            matchTags={lib.baseTags}
+            removedTagNames={lib.removedTagNames}
+            pendingEdits={lib.pendingEdits}
+            tagNames={lib.tagNames}
             onOpen={lib.openVideo}
             onOpened={lib.onVideoOpened}
             getViewCount={getDisplayViewCount}
@@ -472,7 +508,10 @@ export default function App() {
           <VideoGrid
             videos={displayVideos}
             roots={lib.roots}
-            tags={lib.tags}
+            matchTags={lib.baseTags}
+            removedTagNames={lib.removedTagNames}
+            pendingEdits={lib.pendingEdits}
+            tagNames={lib.tagNames}
             onOpen={lib.openVideo}
             onOpened={lib.onVideoOpened}
             getViewCount={getDisplayViewCount}
@@ -509,7 +548,8 @@ export default function App() {
 export function buildTagGroups(
   videos: VideoWithThumbs[],
   tags: ReadonlyArray<Tag>,
-  roots: string[]
+  roots: string[],
+  globalExcluded?: ReadonlySet<string> | ReadonlyArray<string>
 ): VideoGroup[] {
   if (tags.length === 0) {
     return [{ tag: null, videos }];
@@ -520,7 +560,7 @@ export function buildTagGroups(
   const untagged: VideoWithThumbs[] = [];
   const untaggedSeen = new Set<number>();
   for (const v of videos) {
-    const matches = getMatchingTags(v, tags, roots);
+    const matches = getMatchingTags(v, tags, roots, globalExcluded);
     if (matches.length === 0) {
       if (untaggedSeen.has(v.id)) continue;
       untaggedSeen.add(v.id);

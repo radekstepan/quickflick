@@ -4,7 +4,9 @@ import { basename } from 'node:path';
 import {
   addRoot,
   countVideosByRoot,
+  deleteTagGlobally,
   getAllUserTagNames,
+  getGlobalExcludedTagNames,
   getThumbsDir,
   getVideoById,
   listAllFolders,
@@ -202,6 +204,14 @@ export function registerIpc(): void {
 
   ipcMain.handle('tags:list', async () => {
     return getAllUserTagNames();
+  });
+
+  ipcMain.handle('tags:listGlobalExcluded', async () => {
+    return getGlobalExcludedTagNames();
+  });
+
+  ipcMain.handle('tags:deleteGlobal', async (_e, name: string) => {
+    deleteTagGlobally(name);
   });
 
   ipcMain.handle('ffmpeg:status', async () => {

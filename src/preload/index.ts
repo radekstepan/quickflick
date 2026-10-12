@@ -60,6 +60,10 @@ const api: Api = {
   setVideoTag: (id, name) => ipcRenderer.invoke('video:setTag', id, name) as Promise<void>,
   removeVideoTag: (id, name) =>
     ipcRenderer.invoke('video:removeTag', id, name) as Promise<void>,
+  deleteTagGlobally: (name) =>
+    ipcRenderer.invoke('tags:deleteGlobal', name) as Promise<void>,
+  getGlobalExcludedTagNames: () =>
+    ipcRenderer.invoke('tags:listGlobalExcluded') as Promise<string[]>,
   getAllUserTagNames: () => ipcRenderer.invoke('tags:list') as Promise<string[]>,
   getSettings: () => ipcRenderer.invoke('settings:get') as Promise<AppSettings>,
   setTheme: (theme: Theme) =>

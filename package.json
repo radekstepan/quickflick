@@ -17,6 +17,7 @@
     "test": "node scripts/check-node.cjs && vitest run",
     "test:watch": "node scripts/check-node.cjs && vitest",
     "rebuild": "node scripts/rebuild-native.cjs",
+    "rebuild:node": "node scripts/rebuild-native-node.cjs",
     "package:mac": "npm run build && electron-builder --mac",
     "package:mac:arm64": "npm run build && electron-builder --mac --arm64",
     "package:mac:x64": "npm run build && electron-builder --mac --x64"

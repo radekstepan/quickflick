@@ -316,3 +316,50 @@ describe('countVideosByTag', () => {
     }
   });
 });
+
+describe('globalExcluded', () => {
+  const roots = ['/root'];
+
+  it('suppresses auto-matches for globally deleted tags', () => {
+    const video = { filename: 'beach vacation.mp4', folder: '/root/Clips' };
+    expect(videoMatchesTag(video, 'Beach Vacation', roots)).toBe(true);
+    expect(videoMatchesTag(video, 'Beach Vacation', roots, new Set(['beach vacation']))).toBe(false);
+  });
+
+  it('lets explicit user tags win over the global blocklist', () => {
+    const video = {
+      filename: 'beach vacation.mp4',
+      folder: '/root/Clips',
+      tags: ['Beach Vacation']
+    };
+    expect(videoMatchesTag(video, 'Beach Vacation', roots, new Set(['beach vacation']))).toBe(true);
+  });
+
+  it('still respects per-video exclusions', () => {
+    const video = {
+      filename: 'beach vacation.mp4',
+      folder: '/root/Clips',
+      tags: ['Beach Vacation'],
+      excludedTags: ['Beach Vacation']
+    };
+    expect(videoMatchesTag(video, 'Beach Vacation', roots, new Set())).toBe(false);
+  });
+
+  it('zeroes counts for globally deleted auto tags', () => {
+    const videos = [
+      { filename: 'beach vacation 1.mp4', folder: '/root/Clips' },
+      { filename: 'beach vacation 2.mp4', folder: '/root/Other' }
+    ];
+    const counts = countVideosByTag(videos, ['Beach Vacation'], roots, new Set(['beach vacation']));
+    expect(counts.get('Beach Vacation')).toBe(0);
+  });
+
+  it('counts explicitly tagged videos despite the global blocklist', () => {
+    const videos = [
+      { filename: 'clip.mp4', folder: '/root/Clips', tags: ['Beach Vacation'] },
+      { filename: 'other.mp4', folder: '/root/Clips' }
+    ];
+    const counts = countVideosByTag(videos, ['Beach Vacation'], roots, new Set(['beach vacation']));
+    expect(counts.get('Beach Vacation')).toBe(1);
+  });
+});

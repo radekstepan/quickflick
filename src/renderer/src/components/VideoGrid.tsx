@@ -1,14 +1,18 @@
-import { forwardRef, useEffect, useRef, useState } from 'react';
+import { forwardRef, memo, useEffect, useRef, useState } from 'react';
 import { VirtuosoGrid, VirtuosoGridHandle } from 'react-virtuoso';
 import { VideoCard } from './VideoCard';
 import { useViewportPrefetch } from '../hooks/useViewportPrefetch';
+import type { PendingVideoEdit } from '../hooks/useLibrary';
 import type { Tag } from '../utils/tags';
 import type { OpenResult, VideoWithThumbs } from '@shared/types';
 
 interface Props {
   videos: VideoWithThumbs[];
   roots: string[];
-  tags: Tag[];
+  matchTags: Tag[];
+  removedTagNames: ReadonlySet<string>;
+  pendingEdits: ReadonlyMap<number, PendingVideoEdit>;
+  tagNames: string[];
   onOpen: (id: number) => Promise<OpenResult>;
   onOpened?: (result: OpenResult) => void;
   getViewCount: (id: number, fallback: number) => number;
@@ -26,7 +30,20 @@ function computeColumns(width: number): number {
   return Math.max(1, Math.floor((width - PADDING_X + GAP) / (MIN_CARD + GAP)));
 }
 
-export function VideoGrid({ videos, roots, tags, onOpen, onOpened, getViewCount, onAddTag, onRemoveTag, resetScrollKey }: Props) {
+export function VideoGridInner({
+  videos,
+  roots,
+  matchTags,
+  removedTagNames,
+  pendingEdits,
+  tagNames,
+  onOpen,
+  onOpened,
+  getViewCount,
+  onAddTag,
+  onRemoveTag,
+  resetScrollKey
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const virtuosoRef = useRef<VirtuosoGridHandle>(null);
   const [columns, setColumns] = useState<number>(1);
@@ -68,9 +85,12 @@ export function VideoGrid({ videos, roots, tags, onOpen, onOpened, getViewCount,
         computeItemKey={(_, v) => v.id}
         itemContent={(_, v) => (
           <VideoCard
-            video={{ ...v, view_count: getViewCount(v.id, v.view_count) }}
+            video={v}
             roots={roots}
-            tags={tags}
+            matchTags={matchTags}
+            removedTagNames={removedTagNames}
+            pending={pendingEdits.get(v.id)}
+            tagNames={tagNames}
             onOpen={onOpen}
             onOpened={onOpened}
             onAddTag={onAddTag}
@@ -81,6 +101,9 @@ export function VideoGrid({ videos, roots, tags, onOpen, onOpened, getViewCount,
     </div>
   );
 }
+
+// Same rationale as GroupedVideoGrid: skip unrelated parent renders.
+export const VideoGrid = memo(VideoGridInner);
 
 const GridList = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   function GridList({ children, style, ...props }, ref) {
