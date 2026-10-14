@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { VideoWithThumbs } from '@shared/types';
 import type { Tag } from '../utils/tags';
 import { formatViewTime } from '../utils/formatViewTime';
+import { useMenuPosition } from '../hooks/useMenuPosition';
 
 interface Props {
   roots: string[];
@@ -73,6 +74,7 @@ export function Sidebar({
   }, [roots, videos]);
 
   const [menu, setMenu] = useState<ContextMenu | null>(null);
+  const menuPosition = useMenuPosition(menu);
 
   useEffect(() => {
     if (!menu) return;
@@ -166,8 +168,9 @@ export function Sidebar({
 
       {menu ? (
         <div
+          ref={menuPosition.ref}
           className="context-menu"
-          style={{ left: menu.x, top: menu.y }}
+          style={{ left: menuPosition.position?.x ?? menu.x, top: menuPosition.position?.y ?? menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
           {menu.kind === 'root' ? (

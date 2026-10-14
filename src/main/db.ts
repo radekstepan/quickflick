@@ -3,6 +3,7 @@ import { app } from 'electron';
 import { join, dirname } from 'node:path';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { thumbsDirFor } from './thumbnailer';
+import { IMAGE_EXTS } from '../shared/media';
 import type { VideoBase, Thumbnail, VideoWithThumbs, SortKey } from '../shared/types';
 
 export type ThumbStatus = 'pending' | 'ok' | 'failed';
@@ -228,6 +229,16 @@ export function initDb(opts: { dbPath?: string; thumbsDir?: string } = {}): void
   }
 
   runThumbsSeekVersionMigration();
+
+  // Drop rows that are actually still images (e.g. screenshots named
+  // `movie 1080p.mp4.jpg`, false positives from the scanner's loose
+  // release-name regex). Normally a no-op since the walker now skips them;
+  // kept as a per-startup sweep so stale rows disappear without a rescan.
+  // Files on disk are never touched.
+  const purged = purgeImageRows();
+  if (purged.removed > 0) {
+    console.log(`[db] purged ${purged.removed} non-video image row(s)`);
+  }
 }
 
 // One-shot migration: when the thumbnailer changes its seek formula, the
@@ -820,6 +831,33 @@ export function removeStaleVideos(validPaths: Set<string>): number {
   });
   tx(toRemove.map((r) => r.id));
   return toRemove.length;
+}
+
+// Delete rows whose filename ends in a known image extension. The FK
+// cascades take the rows' thumbnails and tags with them. SQLite LIKE is
+// case-insensitive for ASCII, so `%.jpg` also matches `.JPG`.
+export function purgeImageRows(): { removed: number; paths: string[] } {
+  const exts = [...IMAGE_EXTS];
+  const where = exts.map(() => 'filename LIKE ?').join(' OR ');
+  const rows = getDb()
+    .prepare(`DELETE FROM videos WHERE ${where} RETURNING id, path, content_fingerprint`)
+    .all(...exts.map((e) => `%${e}`)) as {
+    id: number;
+    path: string;
+    content_fingerprint: string | null;
+  }[];
+  for (const r of rows) {
+    const keys = [r.path];
+    if (r.content_fingerprint) keys.push(r.content_fingerprint);
+    for (const key of keys) {
+      try {
+        rmSync(thumbsDirFor(key), { recursive: true, force: true });
+      } catch {
+        // best effort — failed rows like these never generated thumbs
+      }
+    }
+  }
+  return { removed: rows.length, paths: rows.map((r) => r.path) };
 }
 
 export function insertThumbnails(rows: Omit<Thumbnail, 'id'>[]): void {

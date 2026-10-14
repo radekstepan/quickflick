@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useHoverCycle } from '../hooks/useHoverCycle';
+import { useMenuPosition } from '../hooks/useMenuPosition';
 import { usePreloadedImages } from '../hooks/usePreloadedImages';
 import { api } from '../api';
 import { displayName } from '../utils/displayName';
@@ -167,6 +168,7 @@ function VideoCardInner({
 
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const menuPosition = useMenuPosition(menu);
 
   useEffect(() => {
     if (!menu) return;
@@ -240,8 +242,9 @@ function VideoCardInner({
       {menu
         ? createPortal(
             <div
+              ref={menuPosition.ref}
               className="context-menu"
-              style={{ left: menu.x, top: menu.y }}
+              style={{ left: menuPosition.position?.x ?? menu.x, top: menuPosition.position?.y ?? menu.y }}
               onClick={(e) => e.stopPropagation()}
             >
               <button

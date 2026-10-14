@@ -25,7 +25,9 @@ import {
   setContentFingerprint,
   recordView,
   setVideoTag,
+  getTagsForVideo,
   removeStaleVideos,
+  purgeImageRows,
   insertThumbnails,
   getThumbsForVideo,
   backupCacheDbIfNewDay,
@@ -278,6 +280,57 @@ describe('removeStaleVideos', () => {
     expect(removed).toBe(1);
     expect(getVideoByPath('/a/keep.mp4')).not.toBeNull();
     expect(getVideoByPath('/a/gone.mp4')).toBeNull();
+  });
+});
+
+describe('purgeImageRows', () => {
+  function seed(filename: string, folder = '/a'): number {
+    return insertVideo({
+      path: `${folder}/${filename}`,
+      folder,
+      filename,
+      size: 1,
+      mtime_ms: 1,
+      duration: null,
+      width: null,
+      height: null,
+      codec: null,
+      content_fingerprint: null
+    });
+  }
+
+  it('removes image rows (including ones named after videos) and keeps videos', () => {
+    seed('keep.mp4');
+    seed('release.mp4-WRB[XC]');
+    const imgId = seed('poster.jpg');
+    seed('movie 1080p.mp4.jpg');
+    insertThumbnails([
+      { video_id: imgId, frame_index: 0, time_offset: 0, file_path: `/thumbs/${imgId}/0.jpg` }
+    ]);
+    setVideoTag(imgId, 'screen');
+
+    const { removed, paths } = purgeImageRows();
+    expect(removed).toBe(2);
+    expect(paths).toHaveLength(2);
+    expect(getVideoByPath('/a/keep.mp4')).not.toBeNull();
+    expect(getVideoByPath('/a/release.mp4-WRB[XC]')).not.toBeNull();
+    expect(getVideoByPath('/a/poster.jpg')).toBeNull();
+    expect(getVideoByPath('/a/movie 1080p.mp4.jpg')).toBeNull();
+    // FK cascades clear the removed rows' thumbnails and tags.
+    expect(getThumbsForVideo(imgId)).toHaveLength(0);
+    expect(getTagsForVideo(imgId)).toHaveLength(0);
+  });
+
+  it('is a no-op when there are no image rows', () => {
+    seed('keep.mp4');
+    expect(purgeImageRows()).toEqual({ removed: 0, paths: [] });
+  });
+
+  it('removes pre-existing image rows on initDb', () => {
+    seed('stale.jpg');
+    closeDb();
+    initDb({ dbPath: join(dir, 'cache.db'), thumbsDir: join(dir, 'thumbs') });
+    expect(getVideoByPath('/a/stale.jpg')).toBeNull();
   });
 });
 

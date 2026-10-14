@@ -27,6 +27,7 @@ import { probeVideo } from './probe';
 import { generateThumbnails, thumbUrl, cacheBustThumbUrl, frameCount } from './thumbnailer';
 import { computeFingerprint } from './hasher';
 import { Queue } from './queue';
+import { VIDEO_EXTS, IMAGE_EXTS } from '../shared/media';
 import type {
   ScanProgress,
   ScanResult,
@@ -35,18 +36,19 @@ import type {
   VideoWithThumbs
 } from '../shared/types';
 
-const VIDEO_EXTS = new Set([
-  '.mov', '.mp4', '.mkv', '.webm', '.m4v', '.avi', '.flv',
-  '.wmv', '.mpg', '.mpeg', '.3gp', '.m2ts', '.ts', '.hevc'
-]);
-
 // Matches a video token followed by -, ., [, ], or end-of-name.
 // Catches scene-release names like "foo.mp4-WRB[XC]" where the trailing
 // ext isn't a video one but the file is still a video.
 const VIDEO_NAME_RE = /\.(mov|mp4|mkv|webm|m4v|avi|flv|wmv|mpg|mpeg|3gp|m2ts|ts|hevc)(?:[-.[\]]|$)/i;
 
-function isVideoFile(name: string): boolean {
-  if (VIDEO_EXTS.has(extname(name).toLowerCase())) return true;
+// A file whose *final* extension is a known image one (e.g. screenshots
+// named after their video, `movie 1080p.mp4.jpg`) is never a video, even
+// when an earlier part of the name matches VIDEO_NAME_RE. Exported for
+// tests.
+export function isVideoFile(name: string): boolean {
+  const ext = extname(name).toLowerCase();
+  if (IMAGE_EXTS.has(ext)) return false;
+  if (VIDEO_EXTS.has(ext)) return true;
   return VIDEO_NAME_RE.test(name);
 }
 

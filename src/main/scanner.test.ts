@@ -24,7 +24,7 @@ import {
   getVideoByFingerprint,
   listAllVideos
 } from './db';
-import { _reconcile, pruneEmptyDirs, type ReconcileInput } from './scanner';
+import { _reconcile, pruneEmptyDirs, isVideoFile, type ReconcileInput } from './scanner';
 import { computeFingerprint } from './hasher';
 
 let dir: string;
@@ -559,5 +559,34 @@ describe('pruneEmptyDirs', () => {
     const protect = new Set<string>();
     const removed = await pruneEmptyDirs(visited, protect);
     expect(removed).toBe(0);
+  });
+});
+
+describe('isVideoFile', () => {
+  it('accepts plain video files', () => {
+    expect(isVideoFile('a.mp4')).toBe(true);
+    expect(isVideoFile('movie.MKV')).toBe(true);
+    expect(isVideoFile('clip.ts')).toBe(true);
+  });
+
+  it('accepts scene-release names with trailing junk', () => {
+    expect(isVideoFile('foo.mp4-WRB[XC]')).toBe(true);
+  });
+
+  it('rejects plain images', () => {
+    expect(isVideoFile('poster.jpg')).toBe(false);
+    expect(isVideoFile('poster.JPG')).toBe(false);
+    expect(isVideoFile('pic.png')).toBe(false);
+    expect(isVideoFile('pic.webp')).toBe(false);
+    expect(isVideoFile('pic.avif')).toBe(false);
+  });
+
+  it('rejects images named after videos', () => {
+    expect(isVideoFile('Holly Garner - solo 1080p.mp4.jpg')).toBe(false);
+    expect(isVideoFile('movie.m4v.jpg')).toBe(false);
+  });
+
+  it('accepts videos whose name contains an image token mid-name', () => {
+    expect(isVideoFile('archive.jpg.mp4')).toBe(true);
   });
 });
