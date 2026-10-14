@@ -2,6 +2,8 @@
 
 A local video library browser for macOS. Pick a folder of videos, get a beautiful grid with hover-cycling thumbnails, click to open in your default video player.
 
+![QuickFlick screenshot](./screenshot.png)
+
 ## Features
 
 - Recursive folder scan for video files (mov, mp4, mkv, webm, m4v, avi, flv, wmv, mpg, mpeg, 3gp, m2ts, ts, hevc)
