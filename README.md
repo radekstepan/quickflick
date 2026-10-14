@@ -31,6 +31,20 @@ yarn dev
 
 This starts the Vite dev server and launches Electron with HMR. Closing the window (red X or **Cmd+W**) and **Cmd+Q** (or app menu → Quit QuickFlick) both fully exit and return the terminal.
 
+### Demo mode
+
+```bash
+yarn dev --demo
+```
+
+Boots the app with a fake in-memory library — famous movie titles with real
+runtimes, Unsplash placeholder posters, and demo tags — instead of your real
+content. Useful for screenshots, recordings, or trying the UI without a
+library. The real `db/library.db`, the real thumbnail cache, and all real
+media files are never touched; clicking a video simulates a play (view count
+ticks up, no external player opens), and rescan is a no-op. Requires network
+access for the placeholder images.
+
 ### About the native module rebuild
 
 `better-sqlite3` ships native code that must be compiled for the runtime that loads it: Electron's Node ABI for the app, the system Node's ABI for `vitest`. Both runtimes share one file (`node_modules/better-sqlite3/build/Release/better_sqlite3.node`), so each command sets the ABI it needs before running:

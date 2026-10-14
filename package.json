@@ -7,7 +7,7 @@
   "author": "Radek Stepan",
   "scripts": {
     "preinstall": "node scripts/check-node.cjs",
-    "dev": "node scripts/check-node.cjs && node scripts/rebuild-native.cjs && QFKILL_PARENT=1 electron-vite dev",
+    "dev": "node scripts/check-node.cjs && node scripts/rebuild-native.cjs && QFKILL_PARENT=1 node scripts/dev.cjs",
     "build": "node scripts/check-node.cjs && node scripts/rebuild-native.cjs && electron-vite build",
     "start": "node scripts/check-node.cjs && node scripts/rebuild-native.cjs && electron-vite preview",
     "preview": "node scripts/check-node.cjs && node scripts/rebuild-native.cjs && electron-vite preview",

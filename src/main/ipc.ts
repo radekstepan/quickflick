@@ -10,8 +10,10 @@ import {
   getThumbsDir,
   getVideoById,
   listAllFolders,
+  listAllVideos,
   listRoots,
   listVideos,
+  recordView,
   removeRoot,
   removeThumbsForPaths,
   removeVideosByRoot,
@@ -20,6 +22,7 @@ import {
   removeVideoTag,
   setVideoTag
 } from './db';
+import { demoScanResult, isDemoMode } from './demo';
 import { checkFfmpeg, checkFfprobe } from './ffmpeg';
 import { scanLibrary } from './scanner';
 import { thumbUrl, cacheBustThumbUrl } from './thumbnailer';
@@ -84,6 +87,8 @@ function emitVideoViewed(payload: VideoViewedEvent): void {
 
 export function registerIpc(): void {
   ipcMain.handle('library:pickFolder', async () => {
+    // Demo mode has a fixed fake library — adding real folders is a no-op.
+    if (isDemoMode()) return null;
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
       title: 'Pick a folder to add to your library'
@@ -131,10 +136,14 @@ export function registerIpc(): void {
   });
 
   ipcMain.handle('library:rescan', async (): Promise<ScanResult> => {
+    // Demo mode: instant fake result. The real scanner must never run here —
+    // it would prune the seeded rows as stale and touch the real filesystem.
+    if (isDemoMode()) return demoScanResult(listAllVideos().length);
     return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
   });
 
   ipcMain.handle('library:retryFailedThumbs', async (): Promise<ScanResult> => {
+    if (isDemoMode()) return demoScanResult(listAllVideos().length);
     const resetCount = resetFailedThumbs();
     if (resetCount === 0) {
       return { added: 0, updated: 0, removed: 0, total: 0, failedThumbnails: [], prunedFolders: 0 };
@@ -143,12 +152,21 @@ export function registerIpc(): void {
   });
 
   ipcMain.handle('library:resetAllThumbs', async (): Promise<ScanResult> => {
+    if (isDemoMode()) return demoScanResult(listAllVideos().length);
     resetAllThumbs();
     return await scanLibrary(emitProgress, emitVideosDiscovered, emitVideoThumbed);
   });
 
   ipcMain.handle('library:listVideos', async (_e, opts?: ListOptions) => {
     const rows = listVideos(opts ?? {});
+    // Demo mode: thumbnail rows already carry remote placeholder URLs in
+    // file_path — serve them directly instead of qfthumb:// file URLs.
+    if (isDemoMode()) {
+      return rows.map((v) => ({
+        ...v,
+        thumbnails: v.thumbnails.map((t) => ({ ...t, url: t.file_path }))
+      }));
+    }
     const td = getThumbsDir();
     return rows.map((v) => ({
       ...v,
@@ -164,6 +182,26 @@ export function registerIpc(): void {
   });
 
   ipcMain.handle('video:open', async (_e, id: number): Promise<OpenResult> => {
+    // Demo mode: simulate a play — bump the in-memory view counter and
+    // watch time immediately. No external player ever launches.
+    if (isDemoMode()) {
+      const demoVideo = getVideoById(id);
+      if (!demoVideo) throw new Error('Video not found');
+      const durationMs =
+        demoVideo.duration && demoVideo.duration > 0
+          ? Math.floor(demoVideo.duration * 1000)
+          : 0;
+      const viewTimeMs = durationMs > 0 ? Math.min(durationMs, 180_000) : 180_000;
+      const updated = recordView(id, viewTimeMs);
+      if (updated) {
+        emitVideoViewed({
+          id,
+          view_count: updated.view_count,
+          view_time_ms: updated.view_time_ms
+        });
+      }
+      return { view_count: updated?.view_count ?? demoVideo.view_count, usedFallback: false };
+    }
     const v = getVideoById(id);
     if (!v) throw new Error('Video not found');
     const { defaultPlayer } = getSettings();
@@ -189,6 +227,8 @@ export function registerIpc(): void {
   });
 
   ipcMain.handle('video:reveal', async (_e, id: number) => {
+    // Demo mode: there is no real file to reveal.
+    if (isDemoMode()) return;
     const v = getVideoById(id);
     if (!v) return;
     shell.showItemInFolder(v.path);
@@ -215,6 +255,8 @@ export function registerIpc(): void {
   });
 
   ipcMain.handle('ffmpeg:status', async () => {
+    // Demo mode needs no local ffmpeg (thumbnails are remote placeholders).
+    if (isDemoMode()) return { ok: true, version: 'demo' };
     const [ff, fp] = await Promise.all([checkFfmpeg(), checkFfprobe()]);
     if (!ff.ok) return { ok: false, installHint: ff.installHint };
     if (!fp.ok) return { ok: false, installHint: fp.installHint };

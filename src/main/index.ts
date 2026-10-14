@@ -1,8 +1,10 @@
 import { app, BrowserWindow, shell, protocol, net, Menu, MenuItemConstructorOptions } from 'electron';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { access } from 'node:fs/promises';
 import { initDb, closeDb, addRoot, getDbPath, getThumbsDir, listAllVideos } from './db';
+import { isDemoMode, seedDemoLibrary } from './demo';
 import { registerIpc, setMainWindow, getMainWindow } from './ipc';
 import { scanLibrary } from './scanner';
 import { flushOnQuit as flushViewTracker } from './viewTracker';
@@ -189,7 +191,19 @@ app.whenReady().then(() => {
     return;
   }
 
-  initDb();
+  initDb(
+    isDemoMode()
+      ? // Demo mode: throwaway in-memory DB + OS temp thumbs dir. The real
+        // library.db, the real thumbnail cache, and all real media files
+        // are never touched. The thumbs override matters: the thumbnail
+        // seek-version migration wipes getThumbsDir() on version change.
+        { dbPath: ':memory:', thumbsDir: join(tmpdir(), 'quickflick-demo-thumbs') }
+      : {}
+  );
+  if (isDemoMode()) {
+    const seeded = seedDemoLibrary();
+    console.log(`[demo] demo mode: seeded ${seeded} placeholder video(s), real library untouched`);
+  }
   registerIpc();
   buildAppMenu();
 
